@@ -1,1 +1,3 @@
-# ai-code-reading-app
+# 코드사수 (codesasu)
+
+눈치 보며 묻던 코드, 이제 하루 10분이면 읽혀요.
