@@ -50,6 +50,8 @@ INSTALLED_APPS = [
     "allauth.account",
     "allauth.socialaccount",
     "allauth.socialaccount.providers.google",
+    # 코드사수 앱
+    "learning",
 ]
 
 MIDDLEWARE = [

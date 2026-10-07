@@ -1,0 +1,112 @@
+from django.conf import settings
+from django.db import models
+
+
+class Course(models.Model):
+    """과정. 예: 파이썬 업무 자동화 30일"""
+
+    slug = models.SlugField(unique=True)
+    title = models.CharField(max_length=100)
+    language = models.CharField(max_length=30, default="python")
+    is_published = models.BooleanField(default=False)
+
+    def __str__(self):
+        return self.title
+
+
+class Lesson(models.Model):
+    """레슨 하나 = 본문 + 문제 2~3개 (FR-05)"""
+
+    class Kind(models.TextChoices):
+        LESSON = "lesson", "일반 레슨"
+        DIAGNOSTIC = "diagnostic", "진단"
+
+    class Track(models.TextChoices):
+        READING = "reading", "읽기"
+        ERROR = "error", "에러"
+        SHIPPING = "shipping", "내보내기"
+
+    course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name="lessons")
+    order_no = models.PositiveIntegerField()
+    kind = models.CharField(max_length=20, choices=Kind.choices, default=Kind.LESSON)
+    track = models.CharField(max_length=20, choices=Track.choices)
+    title = models.CharField(max_length=200)
+    body_md = models.TextField()
+    est_minutes = models.PositiveSmallIntegerField(default=10)
+    is_published = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["course", "order_no"]
+        constraints = [
+            models.UniqueConstraint(fields=["course", "order_no"], name="unique_lesson_order"),
+        ]
+
+    def __str__(self):
+        return f"{self.order_no}. {self.title}"
+
+
+class Question(models.Model):
+    """문제. answer는 화면(API)으로 보내지 않는다"""
+
+    class QType(models.TextChoices):
+        PREDICT = "predict", "결과 예측"
+        ERROR = "error", "에러 해석"
+        FIX_LINE = "fix_line", "고칠 줄 고르기"
+        FLOW = "flow", "흐름 설명"
+
+    lesson = models.ForeignKey(Lesson, on_delete=models.CASCADE, related_name="questions")
+    order_no = models.PositiveIntegerField()
+    qtype = models.CharField(max_length=20, choices=QType.choices)
+    prompt = models.TextField()
+    code = models.TextField(blank=True)
+    choices = models.JSONField(help_text='선택지 목록. 예: ["0", "1", "2", "3"]')
+    answer = models.JSONField(help_text="정답 선택지 번호(1부터 시작). 예: 2")
+    explanation = models.TextField()
+
+    class Meta:
+        ordering = ["lesson", "order_no"]
+        constraints = [
+            models.UniqueConstraint(fields=["lesson", "order_no"], name="unique_question_order"),
+        ]
+
+    def __str__(self):
+        return f"{self.lesson.order_no}-{self.order_no} {self.get_qtype_display()}"
+
+
+class LessonProgress(models.Model):
+    """레슨 풀이 1회. 다시 풀면 새 행. 로그인 전 첫 레슨은 guest_key로 묶는다 (FR-01)"""
+
+    class Phase(models.TextChoices):
+        PRE = "pre", "사전 진단"
+        POST = "post", "사후 진단"
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True, blank=True,
+        related_name="lesson_progresses",
+    )
+    guest_key = models.CharField(max_length=64, blank=True)
+    lesson = models.ForeignKey(Lesson, on_delete=models.CASCADE, related_name="progresses")
+    phase = models.CharField(max_length=10, choices=Phase.choices, blank=True)
+    started_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    duration_sec = models.PositiveIntegerField(null=True, blank=True)
+    correct_count = models.PositiveSmallIntegerField(default=0)
+    hint_rating = models.SmallIntegerField(null=True, blank=True)
+
+    def __str__(self):
+        who = self.user.email if self.user else f"guest:{self.guest_key[:6]}"
+        return f"{who} - {self.lesson}"
+
+
+class AnswerAttempt(models.Model):
+    """답안 제출 1회. 연속 오답 수는 이 테이블에서 센다 (FR-09)"""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True, blank=True,
+        related_name="answer_attempts",
+    )
+    progress = models.ForeignKey(LessonProgress, on_delete=models.CASCADE, related_name="attempts")
+    question = models.ForeignKey(Question, on_delete=models.CASCADE, related_name="attempts")
+    selected = models.JSONField()
+    is_correct = models.BooleanField()
+    created_at = models.DateTimeField(auto_now_add=True)
