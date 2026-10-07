@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import AnswerAttempt, Course, ExplanationReveal, Lesson, LessonProgress, Question
+from .models import AnswerAttempt, Course, ExplanationReveal, HintRequest, Lesson, LessonProgress, Question
 
 
 class QuestionInline(admin.StackedInline):
@@ -33,3 +33,9 @@ class AnswerAttemptAdmin(admin.ModelAdmin):
 @admin.register(ExplanationReveal)
 class ExplanationRevealAdmin(admin.ModelAdmin):
     list_display = ["progress", "question", "created_at"]
+
+
+@admin.register(HintRequest)
+class HintRequestAdmin(admin.ModelAdmin):
+    list_display = ["question", "level", "blocked", "model", "tokens_in", "tokens_out", "created_at"]
+    list_filter = ["blocked", "level", "model"]

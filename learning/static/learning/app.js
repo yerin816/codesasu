@@ -99,7 +99,8 @@ async function initHome() {
 
 /* ---------------- 레슨 풀이 ---------------- */
 
-const state = { lesson: null, idx: 0, progressId: null, selected: null, busy: false };
+const state = { lesson: null, idx: 0, progressId: null, selected: null, busy: false, hints: [], hintBusy: false };
+const HINT_LEVEL = { 1: "방향", 2: "위치", 3: "개념" };
 
 function setActions(buttons) {
   // buttons: [{label, kind, onClick, disabled}]
@@ -204,6 +205,9 @@ function showQuestion() {
   });
 
   $("#q-feedback").hidden = true;
+  state.hints = [];
+  closeSasu();
+  $("#hint-btn").hidden = false;
   setActions([{ label: "제출하기", id: "submit-btn", onClick: submitAnswer, disabled: true }]);
   window.scrollTo(0, 0);
 }
@@ -246,6 +250,7 @@ async function submitAnswer() {
   if (res.data.is_correct) {
     btn.classList.add("correct");
     lockChoices();
+    endHints();
     fb.className = "feedback correct";
     fb.innerHTML = `<p class="verdict">정답이에요</p><div class="explain">${markdown(res.data.explanation)}</div>`;
     revealFeedback();
@@ -261,8 +266,9 @@ async function submitAnswer() {
   fb.className = "feedback wrong";
   fb.innerHTML = `<p class="verdict">아쉬워요, 다시 생각해 볼까요?</p>
     <p class="muted small">다른 답을 골라 보거나, 해설을 보고 넘어갈 수 있어요.</p>`;
-  // TODO(4.2): res.data.suggest_hint 가 true면 여기서 사수 힌트를 제안한다 (FR-09)
   revealFeedback();
+  // FR-09: 같은 문제를 두 번 연속 틀렸고 아직 힌트를 안 받았으면 사수가 먼저 제안한다
+  if (res.data.suggest_hint && state.hints.length === 0) offerHint();
   setActions([
     { label: "해설 보기", kind: "ghost", onClick: revealExplanation },
     { label: "다시 제출", id: "submit-btn", onClick: submitAnswer, disabled: true },
@@ -282,11 +288,74 @@ async function revealExplanation() {
   const answerBtn = choiceButtons().find((b) => Number(b.dataset.no) === res.data.answer);
   if (answerBtn) answerBtn.classList.add("correct");
   lockChoices();
+  endHints();
   const fb = $("#q-feedback");
   fb.className = "feedback reveal";
   fb.innerHTML = `<p class="verdict">정답은 ${esc(res.data.answer)}번이에요</p><div class="explain">${markdown(res.data.explanation)}</div>`;
   revealFeedback();
   setActions([nextAction()]);
+}
+
+/* ---------------- 사수 힌트 (FR-08, FR-09) ---------------- */
+
+function openSasu(html) {
+  $("#sasu-body").innerHTML = html;
+  $("#sasu").hidden = false;
+}
+
+function closeSasu() {
+  $("#sasu").hidden = true;
+}
+
+/* 맞혔거나 해설을 봤으면 힌트는 끝 */
+function endHints() {
+  $("#hint-btn").hidden = true;
+  closeSasu();
+}
+
+function offerHint() {
+  openSasu(`<p class="sasu-msg">두 번 연속 틀렸네요. 괜찮아요, 어디를 보면 좋을지 살짝 짚어 드릴까요?</p>
+    <button type="button" class="btn ghost small" id="sasu-next">힌트 받기</button>`);
+  $("#sasu-next").addEventListener("click", requestHint);
+}
+
+function renderHints(remaining) {
+  const items = state.hints.map((h) => {
+    const sources = (h.sources || []).map((s) => `'${esc(s.title)}'`).join(", ");
+    return `<div class="sasu-item">
+        <p class="sasu-level">${h.level}단계 · ${HINT_LEVEL[h.level]}</p>
+        <p class="sasu-msg">${inline(h.message)}</p>
+        ${sources ? `<p class="sasu-src">근거 레슨: ${sources}</p>` : ""}
+      </div>`;
+  }).join("");
+  const level = state.hints.length;
+  const more = level < 3
+    ? `<button type="button" class="btn ghost small" id="sasu-next">다음 힌트 (${level + 1}/3)</button>`
+    : `<p class="sasu-src">힌트는 여기까지예요. 그래도 막히면 해설 보기로 확인할 수 있어요.</p>`;
+  const left = remaining != null ? `<p class="sasu-left">오늘 남은 힌트 ${esc(remaining)}회</p>` : "";
+  openSasu(items + more + left);
+  if (level < 3) $("#sasu-next").addEventListener("click", requestHint);
+  const body = $("#sasu-body");
+  body.scrollTop = body.scrollHeight;
+}
+
+async function requestHint() {
+  if (state.hintBusy || state.hints.length >= 3) return;
+  state.hintBusy = true;
+  const q = currentQuestion();
+  const level = state.hints.length + 1;
+  openSasu(`<p class="sasu-msg muted">사수가 코드를 보고 있어요…</p>`);
+  const res = await api(`questions/${q.id}/hints`, { progress_id: state.progressId, level });
+  state.hintBusy = false;
+  if (!res.ok) {
+    // 한도 초과(429)가 아니면 다시 시도할 수 있게 버튼을 둔다
+    const retry = res.status === 429 ? "" : `<button type="button" class="btn ghost small" id="sasu-next">다시 시도</button>`;
+    openSasu(`<p class="sasu-msg">${esc(res.message)}</p>${retry}`);
+    if (retry) $("#sasu-next").addEventListener("click", requestHint);
+    return;
+  }
+  state.hints.push(res.data);
+  renderHints(res.data.remaining_today);
 }
 
 function nextQuestion() {
@@ -350,7 +419,13 @@ async function finishLesson() {
 document.addEventListener("DOMContentLoaded", () => {
   const page = document.body.dataset.page;
   if (page === "home") initHome();
-  if (page === "lesson") initLesson();
+  if (page === "lesson") {
+    initLesson();
+    $("#hint-btn").addEventListener("click", () => {
+      if (state.hints.length) renderHints(null); else requestHint();
+    });
+    $("#sasu-close").addEventListener("click", closeSasu);
+  }
 
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("/sw.js").catch(() => {});

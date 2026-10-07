@@ -148,3 +148,29 @@ class LessonChunk(models.Model):
 
     def __str__(self):
         return f"{self.lesson.order_no}-{self.chunk_index}"
+
+
+class HintRequest(models.Model):
+    """사수 힌트 1회 (FR-08, WBS 4.2).
+    하루 한도(20회)와 '힌트를 받은 뒤 스스로 맞힌 비율'은 이 테이블에서 센다."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True, blank=True,
+        related_name="hint_requests",
+    )
+    progress = models.ForeignKey(LessonProgress, on_delete=models.CASCADE, related_name="hints")
+    question = models.ForeignKey(Question, on_delete=models.CASCADE, related_name="hints")
+    level = models.PositiveSmallIntegerField()  # 1 방향 → 2 위치 → 3 개념
+    response = models.TextField()
+    source_lessons = models.JSONField(default=list)  # [{"lesson_id": 1, "title": "..."}]
+    blocked = models.BooleanField(default=False)  # 정답 노출로 답변을 막고 고정 문구를 보냈는지
+    model = models.CharField(max_length=50)  # 어떤 모델이 만들었는지 (나중에 모델별 품질 비교)
+    tokens_in = models.PositiveIntegerField(default=0)
+    tokens_out = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["progress", "question", "level"], name="unique_hint_level"),
+        ]

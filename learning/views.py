@@ -6,15 +6,21 @@
 """
 
 import json
+import logging
 import secrets
 from datetime import timedelta
 
+from django.db import IntegrityError
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
-from .models import AnswerAttempt, ExplanationReveal, Lesson, LessonProgress, Question
+from .embeddings import EmbeddingError
+from .hints import DAILY_LIMIT, LLMError, generate_hint
+from .models import AnswerAttempt, ExplanationReveal, HintRequest, Lesson, LessonProgress, Question
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_WEEKLY_GOAL_DAYS = 5  # 5.1에서 사용자가 고른 주간 목표(profile)로 바꾼다
 HINT_SUGGEST_STREAK = 2  # 같은 문제를 연속 2번 틀리면 사수가 힌트를 제안한다 (FR-09)
@@ -305,3 +311,72 @@ def complete_progress(request, progress_id):
         "question_count": progress.lesson.questions.count(),
         "week": week_summary(progress.user) if progress.user_id else None,
     })
+
+
+def hints_used_today(progress):
+    """오늘(한국 날짜) 이 사람이 받은 힌트 수. 게스트는 같은 브라우저(guest_key) 기준"""
+    today = timezone.localdate()
+    hints = HintRequest.objects.filter(created_at__date=today)
+    if progress.user_id:
+        return hints.filter(progress__user_id=progress.user_id).count()
+    return hints.filter(progress__user__isnull=True, progress__guest_key=progress.guest_key).count()
+
+
+def hint_payload(hint, used_today):
+    return {
+        "hint_id": hint.id,
+        "level": hint.level,
+        "message": hint.response,
+        "sources": hint.source_lessons,
+        "remaining_today": max(DAILY_LIMIT - used_today, 0),
+    }
+
+
+@require_POST
+def request_hint(request, question_id):
+    """POST /api/v1/questions/{id}/hints : 사수 힌트 한 단계 (FR-08)
+    설계서 순서: 한도 확인 → 단계 순서 확인 → 근거 검색 → 모델 요청 → 정답 노출 검사 → 저장"""
+    data = read_json(request)
+    if data is None:
+        return error("VALIDATION_ERROR", "요청 형식이 올바르지 않아요.", 400)
+    progress_id, level = data.get("progress_id"), data.get("level")
+    progress = LessonProgress.objects.filter(id=progress_id).first() if is_number(progress_id) else None
+    if progress is None or not owns(request, progress):
+        return error("NOT_FOUND", "풀이 기록을 찾을 수 없어요.", 404)
+    question = Question.objects.filter(id=question_id, lesson_id=progress.lesson_id).select_related("lesson").first()
+    if question is None:
+        return error("NOT_FOUND", "이 레슨의 문제가 아니에요.", 404)
+    if not is_number(level) or level not in (1, 2, 3):
+        return error("VALIDATION_ERROR", "힌트 단계는 1~3이에요.", 400)
+    if progress.completed_at is not None:
+        return error("VALIDATION_ERROR", "이미 끝낸 풀이예요.", 400)
+    if progress.attempts.filter(question=question, is_correct=True).exists() or \
+            progress.reveals.filter(question=question).exists():
+        return error("VALIDATION_ERROR", "이미 맞혔거나 해설을 본 문제예요.", 400)
+
+    given = {h.level: h for h in progress.hints.filter(question=question)}
+    if level in given:  # 같은 단계를 다시 누르면 새로 만들지 않고 그대로 돌려준다 (한도도 쓰지 않음)
+        return ok(hint_payload(given[level], hints_used_today(progress)))
+    if any(lv not in given for lv in range(1, level)):
+        return error("HINT_LEVEL_SKIPPED", "힌트는 한 단계씩 받을 수 있어요.", 400)
+    if hints_used_today(progress) >= DAILY_LIMIT:
+        return error("HINT_LIMIT", "오늘 힌트를 모두 썼어요. 내일 다시 물어봐 주세요.", 429)
+
+    previous = [given[lv].response for lv in sorted(given)]
+    try:
+        result = generate_hint(question, level, previous)
+    except (LLMError, EmbeddingError) as e:
+        # 원인은 서버 터미널(로그)에 남기고, 화면에는 레슨으로 돌아가라는 안내만 보여 준다.
+        # 메시지 속 키 조각은 hide_keys로 이미 가려져 있다
+        logger.warning("사수 힌트 실패 (문제 %s, %s단계): %s", question.id, level, e)
+        return error("AI_UNAVAILABLE", "사수가 잠깐 자리를 비웠어요. 레슨 본문을 다시 보면 실마리가 있어요.", 503)
+
+    try:
+        hint = HintRequest.objects.create(
+            user=progress.user, progress=progress, question=question, level=level,
+            response=result["message"], source_lessons=result["sources"], blocked=result["blocked"],
+            model=result["model"], tokens_in=result["tokens_in"], tokens_out=result["tokens_out"],
+        )
+    except IntegrityError:  # 버튼을 빠르게 두 번 눌러 같은 단계가 동시에 만들어진 경우
+        hint = progress.hints.get(question=question, level=level)
+    return ok(hint_payload(hint, hints_used_today(progress)), status=201)

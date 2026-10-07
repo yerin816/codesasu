@@ -469,3 +469,167 @@ class EmbeddingClientTests(TestCase):
         self.assertIn("401", str(ctx.exception))
         self.assertNotIn("sk-test-not-real", str(ctx.exception))
         self.assertNotIn("Ec0A", str(ctx.exception))   # OpenAI가 보낸 가린 키 끝자리도 지운다
+
+
+class LeakCheckTests(TestCase):
+    """정답 노출 검사 (NFR-04). 문제1 정답=2번 '1', 문제2 정답=1번 긴 문장"""
+
+    fixtures = ["sample_lessons"]
+
+    def setUp(self):
+        from .models import Question
+
+        self.q_short = Question.objects.get(id=1)   # 선택지 "0","1","2","3", 정답 2번("1")
+        self.q_long = Question.objects.get(id=2)    # 정답 1번: "폴더의 엑셀 파일 목록을 만든다 → ..."
+
+    def leaks(self, msg, q):
+        from .hints import find_leaks
+
+        return find_leaks(msg, q)
+
+    def test_catches_answer_number_value_and_phrases(self):
+        self.assertTrue(self.leaks("정답은 2번이에요.", self.q_short))
+        self.assertTrue(self.leaks("②를 다시 보세요.", self.q_short))
+        self.assertTrue(self.leaks("결과는 1이에요.", self.q_short))
+        self.assertTrue(self.leaks("1이 출력돼요.", self.q_short))
+        self.assertTrue(self.leaks("파일 목록을 만든다 → 하나씩 읽어 모은다 순서예요.", self.q_long))
+        self.assertTrue(self.leaks("count = 0\nfor p in staff:\n    count += 1", self.q_short))
+
+    def test_allows_normal_hints(self):
+        self.assertEqual(self.leaks("if가 있는 줄의 두 조건을 각각 확인해 볼까요?", self.q_short), [])
+        self.assertEqual(self.leaks("2번째 줄부터 한 행씩 따라가 보세요.", self.q_short), [])
+        self.assertEqual(self.leaks("`>=`는 같은 값도 포함한다는 점을 떠올려 보세요.", self.q_short), [])
+        self.assertEqual(self.leaks("for 아래 들여쓴 줄만 반복된다는 점을 기억해 보세요.", self.q_long), [])
+
+
+def fake_chat(messages_by_call):
+    """chat_json 대신 쓰는 가짜: 호출될 때마다 준비된 답을 차례로 돌려준다"""
+    calls = iter(messages_by_call)
+
+    def _chat(system, user, name, schema):
+        _chat.prompts.append(system + "\n" + user)
+        return {"message": next(calls), "used_excerpts": [1]}, {"tokens_in": 100, "tokens_out": 30, "reasoning_tokens": 10}
+
+    _chat.prompts = []
+    return _chat
+
+
+@mock.patch("learning.hints.embed_texts", side_effect=fake_embed)
+class HintApiTests(ApiTestCase):
+    def setUp(self):
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        with mock.patch("learning.management.commands.ingest_chunks.embed_texts", side_effect=fake_embed):
+            call_command("ingest_chunks", stdout=StringIO())
+        from . import hints
+        hints._question_vectors.clear()
+        self.pid = self.start(1)
+
+    def hint(self, level, question_id=1, client=None):
+        return self.post(f"/api/v1/questions/{question_id}/hints", {"progress_id": self.pid, "level": level}, client=client)
+
+    def test_three_levels_in_order_with_sources_and_remaining(self, _embed):
+        chat = fake_chat(["어디를 봐야 할까요?", "if 줄의 조건을 보세요.", "and는 둘 다 참이어야 해요."])
+        with mock.patch("learning.hints.chat_json", side_effect=chat):
+            r1 = self.hint(1)
+            self.assertEqual(r1.status_code, 201, r1.content)
+            body = r1.json()
+            self.assertEqual(body["level"], 1)
+            self.assertEqual(body["remaining_today"], 19)
+            self.assertTrue(body["sources"] and "title" in body["sources"][0])
+            self.assertEqual(self.hint(2).status_code, 201)
+            self.assertEqual(self.hint(3).json()["remaining_today"], 17)
+        # 3단계 요청에는 앞 단계 힌트가 같이 들어가 반복을 피한다
+        self.assertIn("어디를 봐야 할까요?", chat.prompts[2])
+
+    def test_cannot_skip_level_and_repeat_is_free(self, _embed):
+        chat = fake_chat(["어디를 봐야 할까요?"])
+        with mock.patch("learning.hints.chat_json", side_effect=chat):
+            r = self.hint(2)
+            self.assertEqual(r.status_code, 400)
+            self.assertEqual(r.json()["error"]["code"], "HINT_LEVEL_SKIPPED")
+            first = self.hint(1).json()
+            again = self.hint(1)                       # 같은 단계 다시: 모델을 부르지 않고 그대로
+        self.assertEqual(again.status_code, 200)
+        self.assertEqual(again.json()["hint_id"], first["hint_id"])
+        self.assertEqual(len(chat.prompts), 1)
+
+    def test_leak_is_regenerated_then_blocked_with_fixed_message(self, _embed):
+        from .hints import FALLBACK
+        from .models import HintRequest
+
+        with mock.patch("learning.hints.chat_json", side_effect=fake_chat(["정답은 2번이에요.", "괜찮은 힌트예요."])):
+            body = self.hint(1).json()
+        self.assertEqual(body["message"], "괜찮은 힌트예요.")      # 한 번 다시 만들어 통과
+        self.assertFalse(HintRequest.objects.get().blocked)
+
+        with mock.patch("learning.hints.chat_json", side_effect=fake_chat(["결과는 1이에요.", "1이 출력돼요."])):
+            body = self.hint(2).json()
+        self.assertEqual(body["message"], FALLBACK[2])             # 두 번 다 새면 고정 문구
+        self.assertTrue(HintRequest.objects.get(level=2).blocked)
+
+    def test_daily_limit(self, _embed):
+        from .models import HintRequest
+
+        for _ in range(20):
+            p = self.start(1)
+            HintRequest.objects.create(progress_id=p, question_id=1, level=1, response="x", model="m")
+        r = self.hint(1)
+        self.assertEqual(r.status_code, 429)
+        self.assertEqual(r.json()["error"]["code"], "HINT_LIMIT")
+
+    def test_ai_failure_returns_503_and_uses_no_quota(self, _embed):
+        from .llm import LLMError
+        from .models import HintRequest
+
+        with mock.patch("learning.hints.chat_json", side_effect=LLMError("down")):
+            with self.assertLogs("learning.views", level="WARNING") as logs:
+                r = self.hint(1)
+        self.assertIn("down", logs.output[0])   # 실패 원인이 서버 로그에 남는다
+        self.assertEqual(r.status_code, 503)
+        self.assertEqual(r.json()["error"]["code"], "AI_UNAVAILABLE")
+        self.assertEqual(HintRequest.objects.count(), 0)
+
+    def test_others_progress_and_wrong_question(self, _embed):
+        with mock.patch("learning.hints.chat_json", side_effect=fake_chat(["힌트"])):
+            self.assertEqual(self.hint(1, client=Client()).status_code, 404)   # 남의 풀이
+            self.assertEqual(self.hint(1, question_id=3).status_code, 404)     # 다른 레슨의 문제
+
+    def test_no_hint_after_correct_answer(self, _embed):
+        self.answer(self.pid, 1, 2)
+        with mock.patch("learning.hints.chat_json", side_effect=fake_chat(["힌트"])):
+            self.assertEqual(self.hint(1).status_code, 400)
+
+    def test_prompt_has_no_user_info(self, _embed):
+        """OpenAI로 보내는 내용에 사용자 이메일이 들어가지 않는다 (NFR-05)"""
+        user = self.make_user("secret-person@example.com")
+        self.client.force_login(user)
+        self.pid = self.start(1)
+        chat = fake_chat(["어디를 봐야 할까요?"])
+        with mock.patch("learning.hints.chat_json", side_effect=chat):
+            self.assertEqual(self.hint(1).status_code, 201)
+        self.assertNotIn("secret-person", chat.prompts[0])
+
+
+@mock.patch("learning.hints.embed_texts", side_effect=fake_embed)
+class HintCheckCommandTests(TestCase):
+    fixtures = ["sample_lessons"]
+
+    def test_runs_all_levels_without_saving(self, _embed):
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        from .models import HintRequest
+
+        with mock.patch("learning.management.commands.ingest_chunks.embed_texts", side_effect=fake_embed):
+            call_command("ingest_chunks", stdout=StringIO())
+        out = StringIO()
+        with mock.patch("learning.hints.chat_json", side_effect=fake_chat(["어디를 볼까요?"] * 12)):
+            call_command("hint_check", stdout=out)
+        text = out.getvalue()
+        self.assertIn("힌트 12개", text)
+        self.assertIn("고정 문구로 막음 0개", text)
+        self.assertEqual(HintRequest.objects.count(), 0)
