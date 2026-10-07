@@ -1,5 +1,8 @@
 from django.conf import settings
 from django.db import models
+from pgvector.django import VectorField
+
+EMBEDDING_DIMENSIONS = 1536  # OpenAI text-embedding-3-small
 
 
 class Course(models.Model):
@@ -123,3 +126,25 @@ class ExplanationReveal(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["progress", "question"], name="unique_reveal_per_question"),
         ]
+
+
+class LessonChunk(models.Model):
+    """사수 힌트가 근거로 찾을 레슨 본문 조각 (FR-17, WBS 4.1).
+    본문(body_md)만 자른다. 문제 해설은 정답이 들어 있어 넣지 않는다."""
+
+    lesson = models.ForeignKey(Lesson, on_delete=models.CASCADE, related_name="chunks")
+    chunk_index = models.PositiveIntegerField()
+    content = models.TextField()
+    embedding = VectorField(dimensions=EMBEDDING_DIMENSIONS)
+    # 레슨 제목+본문의 지문(해시). 같으면 다시 임베딩하지 않아 비용을 아낀다
+    source_hash = models.CharField(max_length=64)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["lesson", "chunk_index"]
+        constraints = [
+            models.UniqueConstraint(fields=["lesson", "chunk_index"], name="unique_chunk_order"),
+        ]
+
+    def __str__(self):
+        return f"{self.lesson.order_no}-{self.chunk_index}"

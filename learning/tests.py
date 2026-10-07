@@ -334,3 +334,138 @@ class AuthPageTests(TestCase):
             self.assertContains(res, 'class="auth"')
             self.assertContains(res, title)
             self.assertNotContains(res, "Menu:")          # allauth 기본 영어 메뉴는 없음
+
+
+def fake_embed(texts):
+    """테스트용 가짜 임베딩: OpenAI를 부르지 않고 1536차원 숫자 목록을 만든다"""
+    return [[(i + 1) / 1000] * 1536 for i, _ in enumerate(texts)], 10 * len(texts)
+
+
+class ChunkSplitTests(TestCase):
+    def test_long_paragraph_is_split_with_one_sentence_overlap(self):
+        from .chunks import split_into_chunks
+
+        sentences = [f"{i}번째 문장은 코드를 한 줄씩 읽는 연습을 설명하는 꽤 긴 문장이에요." for i in range(12)]
+        chunks = split_into_chunks(" ".join(sentences))
+        self.assertGreater(len(chunks), 1)
+        for c in chunks:
+            self.assertLessEqual(len(c), 300)
+        # 모든 문장이 어딘가에 들어 있고, 다음 조각은 앞 조각의 마지막 문장으로 시작한다
+        for s in sentences:
+            self.assertTrue(any(s in c for c in chunks), s)
+        for prev, nxt in zip(chunks, chunks[1:]):
+            last_sentence = prev.split(". ")[-1]
+            self.assertTrue(nxt.startswith(last_sentence.rstrip(".")), (prev[-40:], nxt[:40]))
+
+    def test_paragraph_break_starts_new_chunk(self):
+        from .chunks import split_into_chunks
+
+        self.assertEqual(split_into_chunks("첫 문단이에요.\n\n둘째 문단이에요."), ["첫 문단이에요.", "둘째 문단이에요."])
+
+
+@mock.patch("learning.management.commands.ingest_chunks.embed_texts", side_effect=fake_embed)
+class IngestChunksTests(TestCase):
+    fixtures = ["sample_lessons"]
+
+    def run_command(self, *args):
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        out = StringIO()
+        call_command("ingest_chunks", *args, stdout=out)
+        return out.getvalue()
+
+    def test_creates_chunks_then_skips_unchanged_lessons(self, embed):
+        from .models import LessonChunk
+
+        self.run_command()
+        self.assertEqual(embed.call_count, 2)                      # 레슨 2개
+        self.assertEqual(LessonChunk.objects.count(), 8)          # 레슨마다 문단 4개
+        self.assertEqual(len(LessonChunk.objects.first().embedding), 1536)
+
+        first_ids = list(LessonChunk.objects.filter(lesson_id=1).values_list("id", flat=True))
+        out = self.run_command()                                   # 바뀐 게 없으면 API를 부르지 않는다
+        self.assertEqual(embed.call_count, 2)
+        self.assertIn("2개는 바뀐 게 없어", out)
+
+        Lesson.objects.filter(id=2).update(body_md="바뀐 본문이에요.")
+        self.run_command()                                         # 바뀐 레슨 2만 다시 만든다
+        self.assertEqual(embed.call_count, 3)
+        self.assertEqual(list(LessonChunk.objects.filter(lesson_id=1).values_list("id", flat=True)), first_ids)
+        self.assertEqual(LessonChunk.objects.filter(lesson_id=2).count(), 1)
+
+    def test_all_option_rebuilds_everything(self, embed):
+        self.run_command()
+        self.run_command("--all")
+        self.assertEqual(embed.call_count, 4)
+
+    def test_dry_run_calls_nothing_and_saves_nothing(self, embed):
+        from .models import LessonChunk
+
+        out = self.run_command("--dry-run")
+        self.assertEqual(embed.call_count, 0)
+        self.assertEqual(LessonChunk.objects.count(), 0)
+        self.assertIn("미리보기 완료", out)
+
+    def test_answers_never_go_into_chunks(self, embed):
+        """해설에는 정답이 들어 있어, 힌트 근거(청크)에 섞이면 안 된다"""
+        from .models import LessonChunk, Question
+
+        self.run_command()
+        all_text = " ".join(LessonChunk.objects.values_list("content", flat=True))
+        for q in Question.objects.all():
+            self.assertNotIn(q.explanation[:20], all_text)
+
+
+class EmbeddingKeyTests(TestCase):
+    fixtures = ["sample_lessons"]
+
+    def test_missing_key_stops_with_clear_message_and_saves_nothing(self):
+        from django.core.management import CommandError, call_command
+
+        from .models import LessonChunk
+
+        with mock.patch.dict("os.environ", {"OPENAI_API_KEY": ""}):
+            with self.assertRaisesMessage(CommandError, "OPENAI_API_KEY"):
+                call_command("ingest_chunks")
+        self.assertEqual(LessonChunk.objects.count(), 0)
+
+
+class EmbeddingClientTests(TestCase):
+    """OpenAI 응답 처리 (실제 호출 없이 응답을 흉내 낸다)"""
+
+    def fake_response(self, status, body):
+        res = mock.Mock(status_code=status)
+        res.json.return_value = body
+        res.text = json.dumps(body)
+        return res
+
+    @mock.patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test-not-real"})
+    def test_keeps_input_order_and_counts_tokens(self):
+        from .embeddings import embed_texts
+
+        body = {"data": [{"index": 1, "embedding": [0.2] * 1536}, {"index": 0, "embedding": [0.1] * 1536}],
+                "usage": {"total_tokens": 7}}
+        with mock.patch("learning.embeddings.requests.post", return_value=self.fake_response(200, body)) as post:
+            vectors, tokens = embed_texts(["가", "나"])
+        self.assertEqual([v[0] for v in vectors], [0.1, 0.2])   # index 순서대로 다시 정렬
+        self.assertEqual(tokens, 7)
+        self.assertEqual(post.call_args.kwargs["json"]["model"], "text-embedding-3-small")
+
+    @mock.patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test-not-real"})
+    def test_wrong_dimension_and_api_error_are_reported_without_key(self):
+        from .embeddings import EmbeddingError, embed_texts
+
+        bad_dim = {"data": [{"index": 0, "embedding": [0.1] * 10}], "usage": {}}
+        with mock.patch("learning.embeddings.requests.post", return_value=self.fake_response(200, bad_dim)):
+            with self.assertRaisesMessage(EmbeddingError, "차원"):
+                embed_texts(["가"])
+
+        err = {"error": {"message": "Incorrect API key provided: sk-proj-*****************Ec0A. You can find your API key"}}
+        with mock.patch("learning.embeddings.requests.post", return_value=self.fake_response(401, err)):
+            with self.assertRaises(EmbeddingError) as ctx:
+                embed_texts(["가"])
+        self.assertIn("401", str(ctx.exception))
+        self.assertNotIn("sk-test-not-real", str(ctx.exception))
+        self.assertNotIn("Ec0A", str(ctx.exception))   # OpenAI가 보낸 가린 키 끝자리도 지운다
