@@ -1,0 +1,14 @@
+{% extends "learning/base.html" %}
+{% comment %}
+  django-allauth(로그인·가입·구글 확인·로그아웃) 화면의 바깥 틀을 코드사수 화면으로 바꾼다.
+  allauth 기본 틀의 영어 메뉴는 쓰지 않고, 폼 모양은 app.css의 .auth 규칙으로 맞춘다.
+{% endcomment %}
+{% block title %}{% block head_title %}{% endblock head_title %} · 코드사수{% endblock title %}
+{% block page %}auth{% endblock page %}
+
+{% block main %}
+<div class="auth">
+  {% block content %}{% endblock content %}
+  {% block extra_body %}{% endblock extra_body %}
+</div>
+{% endblock main %}

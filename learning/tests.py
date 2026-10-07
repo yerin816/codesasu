@@ -321,3 +321,16 @@ class PageTests(TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res["Content-Type"], "application/javascript")
         self.assertIn("no-cache", res["Cache-Control"])
+
+
+class AuthPageTests(TestCase):
+    """로그인·가입 화면이 코드사수 틀과 한국어로 나온다 (3.4)"""
+
+    def test_signup_and_login_use_codesasu_layout_in_korean(self):
+        for url, title in [("/accounts/signup/", "회원가입"), ("/accounts/login/", "로그인")]:
+            res = self.client.get(url)
+            self.assertEqual(res.status_code, 200, url)
+            self.assertContains(res, 'class="topbar"')   # 코드사수 머리말
+            self.assertContains(res, 'class="auth"')
+            self.assertContains(res, title)
+            self.assertNotContains(res, "Menu:")          # allauth 기본 영어 메뉴는 없음

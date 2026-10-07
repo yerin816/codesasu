@@ -70,7 +70,7 @@ ROOT_URLCONF = 'config.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / 'templates'],  # allauth 로그인·가입 화면을 코드사수 모양으로 덮어쓴다
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [

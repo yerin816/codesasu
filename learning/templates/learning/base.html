@@ -26,7 +26,12 @@
   </header>
 
   <main class="page">
-    {% block content %}{% endblock %}
+    {% if messages %}
+      <ul class="messages">
+        {% for message in messages %}<li>{{ message }}</li>{% endfor %}
+      </ul>
+    {% endif %}
+    {% block main %}{% block content %}{% endblock %}{% endblock %}
   </main>
 
   <script src="{% static 'learning/app.js' %}"></script>
