@@ -18,3 +18,9 @@ DATABASES = {
 SECURE_SSL_REDIRECT = False
 SESSION_COOKIE_SECURE = False
 CSRF_COOKIE_SECURE = False
+
+# 테스트 실행기는 DEBUG를 False로 바꿔서 돌리므로, whitenoise가 staticfiles 폴더(배포 때만 만듦)를 찾다가 경고를 낸다.
+# 테스트에는 영향이 없는 경고라 끈다.
+import warnings  # noqa: E402
+
+warnings.filterwarnings("ignore", message="No directory at")
