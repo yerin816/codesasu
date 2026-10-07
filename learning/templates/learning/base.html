@@ -1,0 +1,34 @@
+{% load static %}<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>{% block title %}코드사수{% endblock %}</title>
+  <meta name="description" content="눈치 보며 묻던 코드, 이제 하루 10분이면 읽혀요">
+  <meta name="theme-color" content="#1d6b5f">
+  <link rel="manifest" href="{% url 'manifest' %}">
+  <link rel="icon" type="image/png" href="{% static 'learning/icons/icon-192.png' %}">
+  <link rel="apple-touch-icon" href="{% static 'learning/icons/apple-touch-icon.png' %}">
+  <meta name="apple-mobile-web-app-title" content="코드사수">
+  <meta name="mobile-web-app-capable" content="yes">
+  <link rel="stylesheet" href="{% static 'learning/app.css' %}">
+</head>
+<body data-page="{% block page %}{% endblock %}" data-logged-in="{% if user.is_authenticated %}1{% else %}0{% endif %}">
+  <header class="topbar">
+    <a class="brand" href="{% url 'home' %}">코드사수</a>
+    <nav>
+      {% if user.is_authenticated %}
+        <a href="{% url 'account_logout' %}">로그아웃</a>
+      {% else %}
+        <a href="{% url 'account_login' %}">로그인</a>
+      {% endif %}
+    </nav>
+  </header>
+
+  <main class="page">
+    {% block content %}{% endblock %}
+  </main>
+
+  <script src="{% static 'learning/app.js' %}"></script>
+</body>
+</html>

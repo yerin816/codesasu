@@ -1,0 +1,28 @@
+{% extends "learning/base.html" %}
+{% block title %}레슨 · 코드사수{% endblock %}
+{% block page %}lesson{% endblock %}
+
+{% block content %}
+<div id="lesson" data-lesson-id="{{ lesson_id }}">
+
+  <!-- 1) 본문 -->
+  <section id="intro" aria-live="polite">
+    <p class="muted">불러오는 중…</p>
+  </section>
+
+  <!-- 2) 문제: 한 화면에 한 문제 -->
+  <section id="quiz" hidden>
+    <p class="eyebrow" id="q-count"></p>
+    <h2 class="q-prompt" id="q-prompt"></h2>
+    <pre class="code" id="q-code" tabindex="0"></pre>
+    <ol class="choices" id="q-choices"></ol>
+    <div id="q-feedback" class="feedback" aria-live="polite" hidden></div>
+  </section>
+
+  <!-- 3) 결과 1장 (NFR-08: 레슨 후 화면은 1장) -->
+  <section id="result" hidden></section>
+
+  <!-- 화면 아래 고정 버튼 (한 손으로 누르기 쉽게, NFR-01) -->
+  <div class="actionbar" id="actionbar" hidden></div>
+</div>
+{% endblock %}

@@ -1,0 +1,16 @@
+{% load static %}{
+  "name": "코드사수",
+  "short_name": "코드사수",
+  "description": "눈치 보며 묻던 코드, 이제 하루 10분이면 읽혀요",
+  "lang": "ko",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f6f5f1",
+  "theme_color": "#1d6b5f",
+  "icons": [
+    {"src": "{% static 'learning/icons/icon-192.png' %}", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "{% static 'learning/icons/icon-512.png' %}", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+    {"src": "{% static 'learning/icons/maskable-512.png' %}", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ]
+}

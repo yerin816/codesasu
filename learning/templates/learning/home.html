@@ -1,0 +1,16 @@
+{% extends "learning/base.html" %}
+{% block page %}home{% endblock %}
+
+{% block content %}
+<section class="hello">
+  <p class="eyebrow">하루 10분 코드 읽기</p>
+  <h1>오늘의 레슨</h1>
+</section>
+
+<!-- 아래 내용은 app.js가 /api/v1/today 를 불러와 채운다 -->
+<section id="today" class="card" aria-live="polite">
+  <p class="muted">불러오는 중…</p>
+</section>
+
+<section id="week" class="card week" hidden></section>
+{% endblock %}

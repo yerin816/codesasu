@@ -5,6 +5,8 @@
 """
 
 import json
+from datetime import datetime, timezone as dt_timezone
+from unittest import mock
 
 from django.contrib.auth import get_user_model
 from django.test import Client, TestCase
@@ -234,6 +236,17 @@ class LoggedInTests(ApiTestCase):
 
         self.assertIsNone(self.client.get("/api/v1/today").json()["lesson"])
 
+    def test_week_uses_korean_date(self):
+        """한국 시간 월요일 오전 8시 30분(UTC로는 일요일)에 끝낸 레슨도 이번 주로 센다"""
+        progress = LessonProgress.objects.create(user=self.user, lesson_id=1)
+        LessonProgress.objects.filter(id=progress.id).update(
+            completed_at=datetime(2026, 10, 4, 23, 30, tzinfo=dt_timezone.utc)  # 한국 10/5(월) 08:30
+        )
+        now = datetime(2026, 10, 5, 0, 30, tzinfo=dt_timezone.utc)  # 한국 10/5(월) 09:30
+        with mock.patch("django.utils.timezone.now", return_value=now):
+            week = self.client.get("/api/v1/today").json()["week"]
+        self.assertEqual(week["done_days"], 1)
+
     def test_cannot_touch_other_users_progress(self):
         pid = self.start(1)
         other = Client()
@@ -275,3 +288,36 @@ class CsrfTests(ApiTestCase):
             HTTP_X_CSRFTOKEN=token,
         )
         self.assertEqual(res.status_code, 201)
+
+
+class PageTests(TestCase):
+    """3.3 화면과 PWA 파일"""
+
+    fixtures = ["sample_lessons"]
+
+    def test_home_and_lesson_pages_render_and_set_csrf_cookie(self):
+        for url in ["/", "/lessons/1/"]:
+            res = self.client.get(url)
+            self.assertEqual(res.status_code, 200, url)
+            self.assertIn("csrftoken", res.cookies, url)
+            self.assertContains(res, 'rel="manifest"')
+
+    def test_manifest_is_valid_and_icons_exist(self):
+        from django.contrib.staticfiles import finders
+
+        res = self.client.get("/manifest.webmanifest")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res["Content-Type"], "application/manifest+json")
+        data = json.loads(res.content)
+        self.assertEqual(data["display"], "standalone")
+        sizes = {icon["sizes"] for icon in data["icons"]}
+        self.assertTrue({"192x192", "512x512"} <= sizes)
+        for icon in data["icons"]:
+            path = icon["src"].replace("/static/", "", 1)
+            self.assertIsNotNone(finders.find(path), icon["src"])
+
+    def test_service_worker_served_from_root_without_cache(self):
+        res = self.client.get("/sw.js")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res["Content-Type"], "application/javascript")
+        self.assertIn("no-cache", res["Cache-Control"])
