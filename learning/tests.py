@@ -9,7 +9,7 @@ import json
 from django.contrib.auth import get_user_model
 from django.test import Client, TestCase
 
-from .models import AnswerAttempt, Lesson, LessonProgress
+from .models import AnswerAttempt, ExplanationReveal, Lesson, LessonProgress
 
 # 샘플 레슨 정답: 문제1=2, 문제2=1 (레슨1) / 문제3=1, 문제4=2 (레슨2)
 ANSWERS = {1: 2, 2: 1, 3: 1, 4: 2}
@@ -84,6 +84,7 @@ class GuestTests(ApiTestCase):
 
         first = self.answer(pid, 1, 1).json()  # 오답
         self.assertFalse(first["is_correct"])
+        self.assertIsNone(first["explanation"])  # 틀리면 해설(=정답)을 주지 않는다
         self.assertEqual(first["wrong_streak"], 1)
         self.assertFalse(first["suggest_hint"])
 
@@ -159,6 +160,56 @@ class ValidationTests(ApiTestCase):
     def test_unpublished_lesson_is_hidden(self):
         Lesson.objects.filter(id=1).update(is_published=False)
         self.assertEqual(self.client.get("/api/v1/lessons/1").status_code, 404)
+
+
+class ExplanationTests(ApiTestCase):
+    """10/7 결정 A: 틀리면 해설을 숨기고, '다시 풀기' 또는 '해설 보기'를 고른다"""
+
+    def setUp(self):
+        self.pid = self.start(1)
+
+    def reveal(self, question_id, client=None):
+        return self.post(
+            f"/api/v1/progress/{self.pid}/explanation", {"question_id": question_id}, client=client
+        )
+
+    def test_cannot_reveal_before_answering(self):
+        res = self.reveal(1)
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(ExplanationReveal.objects.count(), 0)
+
+    def test_reveal_after_wrong_then_no_more_answers(self):
+        self.answer(self.pid, 1, 1)  # 오답
+        res = self.reveal(1)
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body["answer"], 2)
+        self.assertTrue(body["explanation"])
+
+        # 해설을 본 뒤에는 같은 문제를 다시 낼 수 없다
+        res = self.answer(self.pid, 1, 2)
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(AnswerAttempt.objects.filter(progress_id=self.pid).count(), 1)
+
+        # 두 번 눌러도 기록은 하나
+        self.assertEqual(self.reveal(1).status_code, 200)
+        self.assertEqual(ExplanationReveal.objects.count(), 1)
+
+        # 해설을 본 문제가 있어도 레슨은 끝낼 수 있고, 맞힌 수에는 들어가지 않는다
+        self.answer(self.pid, 2, 1)
+        done = self.post(f"/api/v1/progress/{self.pid}/complete").json()
+        self.assertEqual(done["correct_count"], 1)
+
+    def test_no_answers_after_correct(self):
+        self.assertTrue(self.answer(self.pid, 1, 2).json()["is_correct"])
+        res = self.answer(self.pid, 1, 1)
+        self.assertEqual(res.status_code, 400)
+
+    def test_other_person_cannot_reveal(self):
+        self.answer(self.pid, 1, 1)
+        res = self.reveal(1, client=Client())
+        self.assertEqual(res.status_code, 404)
+        self.assertEqual(ExplanationReveal.objects.count(), 0)
 
 
 class LoggedInTests(ApiTestCase):

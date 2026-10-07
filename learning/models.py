@@ -110,3 +110,16 @@ class AnswerAttempt(models.Model):
     selected = models.JSONField()
     is_correct = models.BooleanField()
     created_at = models.DateTimeField(auto_now_add=True)
+
+class ExplanationReveal(models.Model):
+    """틀린 뒤 '해설 보기'를 누른 기록 (10/7 결정 A).
+    해설을 본 문제는 다시 풀 수 없고, '힌트 뒤 스스로 맞힌 비율'에서 뺄 때 쓴다."""
+
+    progress = models.ForeignKey(LessonProgress, on_delete=models.CASCADE, related_name="reveals")
+    question = models.ForeignKey(Question, on_delete=models.CASCADE, related_name="reveals")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["progress", "question"], name="unique_reveal_per_question"),
+        ]

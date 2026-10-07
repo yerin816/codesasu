@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import AnswerAttempt, Course, Lesson, LessonProgress, Question
+from .models import AnswerAttempt, Course, ExplanationReveal, Lesson, LessonProgress, Question
 
 
 class QuestionInline(admin.StackedInline):
@@ -28,3 +28,8 @@ class LessonProgressAdmin(admin.ModelAdmin):
 @admin.register(AnswerAttempt)
 class AnswerAttemptAdmin(admin.ModelAdmin):
     list_display = ["progress", "question", "selected", "is_correct", "created_at"]
+
+
+@admin.register(ExplanationReveal)
+class ExplanationRevealAdmin(admin.ModelAdmin):
+    list_display = ["progress", "question", "created_at"]

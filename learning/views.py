@@ -1,7 +1,7 @@
 """레슨 풀이 API (설계 탭 'API 명세'의 레슨 영역 5개)
 
 - 응답은 JSON, 에러는 {"error": {"code", "message"}} 한 가지 모양으로 보낸다.
-- 정답(answer)은 어떤 응답에도 넣지 않는다. 채점은 서버에서만 한다.
+- 정답(answer)은 '해설 보기'를 누른 뒤에만 보낸다. 채점은 서버에서만 한다.
 - 로그인 없이는 첫 레슨만 풀 수 있다(FR-01). 게스트 기록은 세션의 guest_key로 묶는다.
 """
 
@@ -14,7 +14,7 @@ from django.utils import timezone
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
-from .models import AnswerAttempt, Lesson, LessonProgress, Question
+from .models import AnswerAttempt, ExplanationReveal, Lesson, LessonProgress, Question
 
 DEFAULT_WEEKLY_GOAL_DAYS = 5  # 5.1에서 사용자가 고른 주간 목표(profile)로 바꾼다
 HINT_SUGGEST_STREAK = 2  # 같은 문제를 연속 2번 틀리면 사수가 힌트를 제안한다 (FR-09)
@@ -211,6 +211,12 @@ def submit_answer(request, progress_id):
     if not is_number(selected) or not 1 <= selected <= len(question.choices):
         return error("VALIDATION_ERROR", "선택지 번호가 올바르지 않아요.", 400)
 
+    # 맞힌 문제나 해설을 본 문제는 다시 풀지 않는다 (기록이 부풀지 않게)
+    if progress.attempts.filter(question=question, is_correct=True).exists():
+        return error("VALIDATION_ERROR", "이미 맞힌 문제예요. 다음 문제로 넘어가 주세요.", 400)
+    if progress.reveals.filter(question=question).exists():
+        return error("VALIDATION_ERROR", "해설을 본 문제는 다시 풀 수 없어요. 다음 문제로 넘어가 주세요.", 400)
+
     is_correct = selected == question.answer
     AnswerAttempt.objects.create(
         user=progress.user,
@@ -231,9 +237,39 @@ def submit_answer(request, progress_id):
 
     return ok({
         "is_correct": is_correct,
-        "explanation": question.explanation,
+        # 틀렸을 때는 해설(=정답)을 주지 않는다. 다시 풀거나 '해설 보기'를 고른다 (10/7 결정 A)
+        "explanation": question.explanation if is_correct else None,
         "wrong_streak": wrong_streak,
         "suggest_hint": wrong_streak >= HINT_SUGGEST_STREAK,
+    })
+
+
+@require_POST
+def reveal_explanation(request, progress_id):
+    """POST /api/v1/progress/{id}/explanation : 틀린 뒤 '해설 보기' (10/7 결정 A)
+    한 번 이상 답을 낸 문제만 열 수 있고, 연 뒤에는 그 문제를 다시 풀 수 없다."""
+    progress = LessonProgress.objects.filter(id=progress_id).first()
+    if progress is None or not owns(request, progress):
+        return error("NOT_FOUND", "풀이 기록을 찾을 수 없어요.", 404)
+
+    data = read_json(request)
+    if data is None:
+        return error("VALIDATION_ERROR", "요청 형식이 올바르지 않아요.", 400)
+    question_id = data.get("question_id")
+    question = None
+    if is_number(question_id):
+        question = Question.objects.filter(id=question_id, lesson_id=progress.lesson_id).first()
+    if question is None:
+        return error("VALIDATION_ERROR", "이 레슨의 문제가 아니에요.", 400)
+    if not progress.attempts.filter(question=question).exists():
+        return error("VALIDATION_ERROR", "먼저 답을 하나 골라 주세요.", 400)
+
+    # 두 번 눌러도 기록은 하나만 남는다
+    ExplanationReveal.objects.get_or_create(progress=progress, question=question)
+    return ok({
+        "question_id": question.id,
+        "answer": question.answer,  # 화면에서 정답 선택지를 표시하는 데 쓴다
+        "explanation": question.explanation,
     })
 
 
