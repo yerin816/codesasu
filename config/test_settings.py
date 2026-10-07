@@ -11,3 +11,10 @@ DATABASES = {
         "NAME": ":memory:",
     }
 }
+
+# 배포용 보안 설정(https로 보내기, https 전용 쿠키)은 테스트에서 끈다.
+# 테스트는 http로 요청하므로, 켜져 있으면 모든 요청이 https로 넘어가 버린다.
+# 결과가 .env의 DEBUG 값에 따라 달라지지 않게 여기서 고정한다.
+SECURE_SSL_REDIRECT = False
+SESSION_COOKIE_SECURE = False
+CSRF_COOKIE_SECURE = False

@@ -33,7 +33,19 @@ SECRET_KEY = os.getenv('DJANGO_SECRET_KEY')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG') == 'True'
 
-ALLOWED_HOSTS = []
+# 접속을 허용할 주소. PC 개발(DEBUG=True)은 localhost가 자동 허용되고,
+# 배포 서버는 환경변수 ALLOWED_HOSTS에 쉼표로 적는다 (예: codesasu-xxxx.a.run.app)
+ALLOWED_HOSTS = [h.strip() for h in os.getenv("ALLOWED_HOSTS", "").split(",") if h.strip()]
+CSRF_TRUSTED_ORIGINS = [f"https://{h.lstrip('.')}" for h in ALLOWED_HOSTS if not h.startswith(".")]
+
+if not DEBUG:
+    # Cloud Run은 HTTPS를 앞단에서 처리하고 앱에는 HTTP로 넘겨 준다. 원래 HTTPS였음을 이 헤더로 알아본다
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    SESSION_COOKIE_SECURE = True   # 로그인 쿠키는 HTTPS로만 보낸다
+    CSRF_COOKIE_SECURE = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_SSL_REDIRECT = True     # http로 들어오면 https로 보낸다
+    # HSTS(브라우저에 https만 쓰라고 기억시키기)는 잘못 걸면 되돌리기 어려워 실제 주소를 정한 뒤 따로 켠다
 
 
 # Application definition
@@ -56,6 +68,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    "whitenoise.middleware.WhiteNoiseMiddleware",  # 배포 서버에서 CSS·JS·아이콘을 직접 내보낸다
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -133,6 +146,12 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / "staticfiles"  # 배포 때 collectstatic이 정적 파일을 모으는 곳 (Git에는 올리지 않음)
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    # gzip·brotli로 압축해 내보낸다. 파일 이름에 해시를 붙이는 방식은 쓰지 않아 collectstatic 없이도 테스트가 돈다
+    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedStaticFilesStorage"},
+}
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
@@ -161,4 +180,4 @@ SOCIALACCOUNT_PROVIDERS = {
 
 LOGIN_REDIRECT_URL = "/"
 ACCOUNT_LOGOUT_REDIRECT_URL = "/"
-EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"

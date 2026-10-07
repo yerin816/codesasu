@@ -5,11 +5,15 @@
 """
 
 import json
+import os
+import subprocess
+import sys
 from datetime import datetime, timezone as dt_timezone
 from unittest import mock
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.test import Client, TestCase
+from django.test import Client, SimpleTestCase, TestCase
 
 from .models import AnswerAttempt, ExplanationReveal, Lesson, LessonProgress
 
@@ -633,3 +637,31 @@ class HintCheckCommandTests(TestCase):
         self.assertIn("힌트 12개", text)
         self.assertIn("고정 문구로 막음 0개", text)
         self.assertEqual(HintRequest.objects.count(), 0)
+
+
+class DeploySettingsTests(SimpleTestCase):
+    """배포(DEBUG=False)일 때 보안 설정이 켜지는지, 실제 settings.py를 새 파이썬으로 따로 읽어 확인한다"""
+
+    KEYS = ["DEBUG", "ALLOWED_HOSTS", "CSRF_TRUSTED_ORIGINS", "SECURE_SSL_REDIRECT", "SESSION_COOKIE_SECURE", "CSRF_COOKIE_SECURE"]
+
+    def read_settings(self, **env):
+        code = f"import json, config.settings as s; print(json.dumps({{k: getattr(s, k, None) for k in {self.KEYS}}}))"
+        # Windows는 SYSTEMROOT 등이 없으면 파이썬이 안 뜨므로 지금 환경을 그대로 넘기고 필요한 값만 덮어쓴다.
+        # .env는 이미 있는 환경변수를 덮어쓰지 않으므로, 여기서 넘긴 값이 그대로 쓰인다.
+        base = {**os.environ, "DJANGO_SECRET_KEY": "x", "DATABASE_URL": "postgres://u:p@localhost:5432/db",
+                "GOOGLE_CLIENT_ID": "x", "GOOGLE_CLIENT_SECRET": "x", "ALLOWED_HOSTS": ""}
+        out = subprocess.run([sys.executable, "-c", code], env={**base, **env}, cwd=str(settings.BASE_DIR),
+                             capture_output=True, text=True, check=True)
+        return json.loads(out.stdout.strip().splitlines()[-1])
+
+    def test_production_turns_on_https_settings(self):
+        s = self.read_settings(DEBUG="False", ALLOWED_HOSTS="codesasu-abc.a.run.app")
+        self.assertFalse(s["DEBUG"])
+        self.assertEqual(s["ALLOWED_HOSTS"], ["codesasu-abc.a.run.app"])
+        self.assertEqual(s["CSRF_TRUSTED_ORIGINS"], ["https://codesasu-abc.a.run.app"])
+        self.assertTrue(s["SECURE_SSL_REDIRECT"] and s["SESSION_COOKIE_SECURE"] and s["CSRF_COOKIE_SECURE"])
+
+    def test_local_development_keeps_them_off(self):
+        s = self.read_settings(DEBUG="True")
+        self.assertTrue(s["DEBUG"])
+        self.assertFalse(s["SECURE_SSL_REDIRECT"])

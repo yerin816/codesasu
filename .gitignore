@@ -216,3 +216,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Django collectstatic 결과 (배포 때 Docker 안에서 만든다)
+staticfiles/
