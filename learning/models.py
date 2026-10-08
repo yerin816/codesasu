@@ -1,4 +1,7 @@
+import unicodedata
+
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
 from pgvector.django import VectorField
 
@@ -48,6 +51,21 @@ class Lesson(models.Model):
         return f"{self.order_no}. {self.title}"
 
 
+# 문제 코드 한 줄의 최대 폭. 한글은 영문 2칸으로 센다.
+# 10/8 아이폰 확인에서 긴 줄이 잘려 정답을 가르는 조건이 안 보였다.
+# 폭 375px 화면은 글자를 11.5px까지 줄여도 약 45칸이 들어가서 44칸으로 정했다.
+CODE_MAX_WIDTH = 44
+
+
+def display_width(line):
+    return sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1 for ch in line)
+
+
+def long_code_lines(code, limit=CODE_MAX_WIDTH):
+    """폭을 넘는 줄 번호(1부터) 목록"""
+    return [i for i, line in enumerate(code.splitlines(), 1) if display_width(line) > limit]
+
+
 class Question(models.Model):
     """문제. answer는 화면(API)으로 보내지 않는다"""
 
@@ -74,6 +92,13 @@ class Question(models.Model):
 
     def __str__(self):
         return f"{self.lesson.order_no}-{self.order_no} {self.get_qtype_display()}"
+
+    def clean(self):
+        # 관리자 화면에서 문제를 저장할 때 긴 줄을 막는다 (레슨 작성 규칙)
+        lines = long_code_lines(self.code or "")
+        if lines:
+            raise ValidationError({"code": f"폰 화면에서 잘리는 줄이 있어요: {', '.join(map(str, lines))}번째 줄. "
+                                           f"한 줄을 {CODE_MAX_WIDTH}칸(한글은 2칸) 안으로 나눠 주세요."})
 
 
 class LessonProgress(models.Model):

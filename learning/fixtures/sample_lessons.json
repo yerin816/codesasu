@@ -45,7 +45,7 @@
       "order_no": 1,
       "qtype": "predict",
       "prompt": "영업팀에서 연차 5년 이상인 사람 수를 세는 코드예요. 실행하면 무엇이 출력될까요?",
-      "code": "staff = [\n    {\"이름\": \"김하늘\", \"부서\": \"영업\", \"연차\": 3},\n    {\"이름\": \"이도윤\", \"부서\": \"인사\", \"연차\": 7},\n    {\"이름\": \"박서연\", \"부서\": \"영업\", \"연차\": 5},\n]\ncount = 0\nfor person in staff:\n    if person[\"부서\"] == \"영업\" and person[\"연차\"] >= 5:\n        count += 1\nprint(count)",
+      "code": "staff = [\n    {\"부서\": \"영업\", \"연차\": 3},\n    {\"부서\": \"인사\", \"연차\": 7},\n    {\"부서\": \"영업\", \"연차\": 5},\n]\ncount = 0\nfor person in staff:\n    team = person[\"부서\"]\n    years = person[\"연차\"]\n    if team == \"영업\" and years >= 5:\n        count += 1\nprint(count)",
       "choices": [
         "0",
         "1",
@@ -53,7 +53,7 @@
         "3"
       ],
       "answer": 2,
-      "explanation": "두 조건을 모두 만족하는 사람은 박서연 한 명이라 1이다. >=는 '이상'이라 5도 포함된다. ①은 5를 뺀 경우(>로 읽음), ③은 연차 조건을 놓친 경우, ④는 and를 '둘 중 하나'(or)로 읽은 경우다"
+      "explanation": "두 조건을 모두 만족하는 사람은 세 번째 줄(영업, 연차 5) 한 명이라 1이다. >=는 '이상'이라 5도 포함된다. ①은 5를 뺀 경우(>로 읽음), ③은 연차 조건을 놓친 경우, ④는 and를 '둘 중 하나'(or)로 읽은 경우다"
     }
   },
   {
@@ -64,7 +64,7 @@
       "order_no": 2,
       "qtype": "flow",
       "prompt": "팀원들이 보낸 엑셀 파일을 하나로 합치는 코드예요. glob.glob은 폴더에서 파일 목록을 찾고, pd.concat은 여러 표를 하나로 합쳐요. 하는 일을 순서대로 맞게 설명한 것은?",
-      "code": "import glob\nimport pandas as pd\n\nfiles = glob.glob(\"팀별_보고서/*.xlsx\")\nframes = []\nfor f in files:\n    df = pd.read_excel(f)\n    frames.append(df)\nresult = pd.concat(frames)\nresult.to_excel(\"전체_취합.xlsx\", index=False)",
+      "code": "import glob\nimport pandas as pd\n\nfiles = glob.glob(\"팀별_보고서/*.xlsx\")\nframes = []\nfor f in files:\n    df = pd.read_excel(f)\n    frames.append(df)\nresult = pd.concat(frames)\nsave_as = \"전체_취합.xlsx\"\nresult.to_excel(save_as, index=False)",
       "choices": [
         "폴더의 엑셀 파일 목록을 만든다 → 하나씩 읽어 모은다 → 한 표로 합친다 → 새 파일로 저장한다",
         "파일을 하나 읽을 때마다 바로 '전체_취합.xlsx'에 저장한다",
@@ -82,8 +82,8 @@
       "lesson": 2,
       "order_no": 1,
       "qtype": "error",
-      "prompt": "직원 명단에서 부서와 매출을 출력하려는데 마지막 줄에 KeyError: '부서'가 났어요. 원인은 무엇일까요?",
-      "code": "rows = [\n    {\"이름\": \"김하늘\", \"부서명\": \"영업\", \"매출\": 120},\n    {\"이름\": \"이도윤\", \"부서명\": \"인사\", \"매출\": 80},\n]\nfor row in rows:\n    print(row[\"부서\"], row[\"매출\"])",
+      "prompt": "팀별 매출 표에서 부서와 매출을 출력하려는데 마지막 줄에 KeyError: '부서'가 났어요. 원인은 무엇일까요?",
+      "code": "rows = [\n    {\"부서명\": \"영업\", \"매출\": 120},\n    {\"부서명\": \"인사\", \"매출\": 80},\n]\nfor row in rows:\n    print(row[\"부서\"], row[\"매출\"])",
       "choices": [
         "데이터에 '부서'라는 열 이름이 없다",
         "한글 열 이름은 파이썬에서 쓸 수 없다",

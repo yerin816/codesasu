@@ -76,7 +76,7 @@ class GuestTests(ApiTestCase):
             self.assertNotIn("answer", q)
             self.assertNotIn("explanation", q)
         # 키 이름을 바꿔 새는 경우까지 막기 위해 원문 해설 문장도 응답에 없는지 본다
-        self.assertNotIn("박서연 한 명이라", res.content.decode())
+        self.assertNotIn("세 번째 줄(영업, 연차 5) 한 명이라", res.content.decode())
 
     def test_guest_cannot_open_second_lesson(self):
         res = self.client.get("/api/v1/lessons/2")
@@ -665,3 +665,29 @@ class DeploySettingsTests(SimpleTestCase):
         s = self.read_settings(DEBUG="True")
         self.assertTrue(s["DEBUG"])
         self.assertFalse(s["SECURE_SSL_REDIRECT"])
+
+
+class LessonCodeWidthTests(SimpleTestCase):
+    """문제 코드가 폰 화면에서 잘리지 않는 폭인지 (10/8 아이폰에서 `>= 5`가 잘려 보이지 않았던 문제)"""
+
+    def test_sample_lesson_code_fits_phone(self):
+        from pathlib import Path
+
+        from .models import long_code_lines
+
+        data = json.loads((Path(__file__).parent / "fixtures" / "sample_lessons.json").read_text(encoding="utf-8"))
+        for obj in data:
+            if obj["model"] == "learning.question":
+                self.assertEqual(long_code_lines(obj["fields"]["code"]), [], f"문제 {obj['pk']}")
+
+    def test_admin_rejects_long_line(self):
+        from django.core.exceptions import ValidationError
+
+        from .models import Question
+
+        long_line = '    {"이름": "김하늘", "부서": "영업", "연차": 3},'  # 한글 포함 50칸
+        q = Question(code=f"staff = [\n{long_line}\n]")
+        with self.assertRaises(ValidationError) as ctx:
+            q.clean()
+        self.assertIn("2번째 줄", str(ctx.exception))
+        Question(code="count = 0\nprint(count)").clean()  # 짧은 코드는 통과

@@ -17,7 +17,11 @@
       <button type="button" class="hint-btn" id="hint-btn">사수 힌트</button>
     </div>
     <h2 class="q-prompt" id="q-prompt"></h2>
-    <pre class="code" id="q-code" tabindex="0"></pre>
+    <!-- 긴 줄은 글자를 조금 줄여 한 화면에 맞추고, 그래도 넘치면 오른쪽 흐림과 안내를 보여 준다 -->
+    <div class="code-wrap" id="q-code-wrap">
+      <pre class="code" id="q-code" tabindex="0"></pre>
+    </div>
+    <p class="code-hint" id="q-code-hint" hidden>옆으로 밀면 코드가 더 있어요 →</p>
     <ol class="choices" id="q-choices"></ol>
     <div id="q-feedback" class="feedback" aria-live="polite" hidden></div>
   </section>

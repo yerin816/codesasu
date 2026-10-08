@@ -188,6 +188,8 @@ function showQuestion() {
   const code = $("#q-code");
   code.textContent = q.code || "";
   code.hidden = !q.code;
+  code.scrollLeft = 0;
+  fitCode();
 
   const list = $("#q-choices");
   list.innerHTML = "";
@@ -210,6 +212,44 @@ function showQuestion() {
   $("#hint-btn").hidden = false;
   setActions([{ label: "제출하기", id: "submit-btn", onClick: submitAnswer, disabled: true }]);
   window.scrollTo(0, 0);
+}
+
+/* 코드 줄이 폰 화면보다 길면 글자를 최소 CODE_MIN_PX까지 줄여 한 화면에 맞춘다.
+ * 그래도 넘치면 가로 스크롤을 두고 오른쪽 흐림 + 안내 문구를 보여 준다.
+ * (10/8 아이폰 확인: 13.5px에서 정답을 가르는 조건 `>= 5`가 화면 밖으로 잘려 안 보였다) */
+const CODE_PX = 13.5;
+const CODE_MIN_PX = 11.5;
+
+function fitCode() {
+  const code = $("#q-code");
+  const wrap = $("#q-code-wrap");
+  const hint = $("#q-code-hint");
+  if (!code || !wrap || !hint) return;
+  code.style.fontSize = "";
+  if (code.hidden || !code.textContent) {
+    wrap.classList.remove("is-overflow");
+    hint.hidden = true;
+    return;
+  }
+  const style = getComputedStyle(code);
+  const pad = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+  const box = code.clientWidth - pad;
+  const full = code.scrollWidth - pad;
+  if (full > box) {
+    const size = Math.max(CODE_MIN_PX, Math.floor((CODE_PX * box / full) * 10) / 10);
+    code.style.fontSize = `${size}px`;
+  }
+  const overflow = code.scrollWidth > code.clientWidth + 1;
+  wrap.classList.toggle("is-overflow", overflow);
+  wrap.classList.remove("at-end");
+  hint.hidden = !overflow;
+}
+
+function markCodeScrollEnd() {
+  const code = $("#q-code");
+  const wrap = $("#q-code-wrap");
+  if (!code || !wrap) return;
+  wrap.classList.toggle("at-end", code.scrollLeft + code.clientWidth >= code.scrollWidth - 2);
 }
 
 function choiceButtons() {
@@ -425,6 +465,9 @@ document.addEventListener("DOMContentLoaded", () => {
       if (state.hints.length) renderHints(null); else requestHint();
     });
     $("#sasu-close").addEventListener("click", closeSasu);
+    $("#q-code").addEventListener("scroll", markCodeScrollEnd, { passive: true });
+    window.addEventListener("resize", fitCode);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitCode);
   }
 
   if ("serviceWorker" in navigator) {
