@@ -76,7 +76,7 @@ class GuestTests(ApiTestCase):
             self.assertNotIn("answer", q)
             self.assertNotIn("explanation", q)
         # 키 이름을 바꿔 새는 경우까지 막기 위해 원문 해설 문장도 응답에 없는지 본다
-        self.assertNotIn("세 번째 줄(영업, 연차 5) 한 명이라", res.content.decode())
+        self.assertNotIn("세 번째 사람(영업, 연차 5) 한 명이라", res.content.decode())
 
     def test_guest_cannot_open_second_lesson(self):
         res = self.client.get("/api/v1/lessons/2")
@@ -928,6 +928,14 @@ class LessonFileCheckTests(SimpleTestCase):
         self.assertTrue(any("'check'" in e for e in self.check(stray, run=False).errors))
         bad_check = GOOD_LESSON.replace('check = { error = "KeyError" }', 'check = { eror = "KeyError" }')
         self.assertTrue(any("check.eror" in e for e in self.check(bad_check, run=False).errors))
+
+    def test_body_code_block_rules(self):
+        wide = GOOD_LESSON.replace('body = "본문이에요."', 'body = """본문\n\n```\nx = "아주아주아주아주아주아주아주아주긴줄이에요"\n```"""')
+        self.assertTrue(any("본문 코드 상자" in e for e in self.check(wide, run=False).errors))
+        unclosed = GOOD_LESSON.replace('body = "본문이에요."', 'body = """본문\n\n```\nx = 1"""')
+        self.assertTrue(any("짝이 맞지 않음" in e for e in self.check(unclosed, run=False).errors))
+        ok = GOOD_LESSON.replace('body = "본문이에요."', 'body = """본문\n\n```\nx = 1\n```"""')
+        self.assertEqual(self.check(ok, run=False).errors, [])
 
     def test_lesson_number_and_file_name(self):
         report = self.check(GOOD_LESSON.replace("order_no = 1", "order_no = 2"), run=False)

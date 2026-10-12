@@ -23,9 +23,12 @@ function inline(text) {
     .replace(/\n/g, "<br>");
 }
 function markdown(md) {
+  // ``` 로 감싼 줄은 본문 속 코드 상자로, 나머지는 빈 줄 기준 문단으로 (10/12 폰 점검: 긴 코드가 문장 속에서 쪼개짐)
   return String(md || "")
-    .split(/\n{2,}/)
-    .map((para) => `<p>${inline(para.trim())}</p>`)
+    .split(/```[^\n]*\n([\s\S]*?)\n?```/)
+    .map((part, i) => (i % 2 === 1
+      ? `<pre class="code snippet">${esc(part)}</pre>`
+      : part.split(/\n{2,}/).filter((p) => p.trim()).map((p) => `<p>${inline(p.trim())}</p>`).join("")))
     .join("");
 }
 

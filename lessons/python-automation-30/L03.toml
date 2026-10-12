@@ -1,9 +1,9 @@
-# L03 초안 (10/12) - 검토 후 published = true로 바꾸면 공개
+# L03 (10/12 작성, 폰 미리보기 점검 후 공개)
 order_no = 3
 track = "reading"
 title = "조건은 위에서부터, 처음 맞는 칸 하나만 탄다"
 est_minutes = 9
-published = false
+published = true
 body = '''
 `if`·`elif`·`else`는 위에서부터 차례로 조건을 확인해요. 처음으로 참인 조건을 만나면 그 아래 들여쓴 줄만 실행하고, 나머지 `elif`·`else`는 확인하지 않고 건너뛰어요.
 

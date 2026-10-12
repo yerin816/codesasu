@@ -131,6 +131,8 @@ pre.code {
   overflow-wrap: normal;
   margin: 0;
 }
+/* 레슨 본문 속 코드 상자: 문제 코드보다 작게, 위아래 문단과 간격 */
+pre.code.snippet { padding: 10px 12px; font-size: 13px; margin: 0 0 14px; }
 /* 줄 번호: 코드와 같이 줄어들도록 em 단위, 복사할 때는 빠진다 */
 pre.code .ln {
   display: inline-block;

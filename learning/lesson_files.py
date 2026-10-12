@@ -44,6 +44,7 @@ LESSON_KEYS = {"order_no", "kind", "track", "title", "est_minutes", "published",
 QUESTION_KEYS = {"qtype", "prompt", "code", "choices", "answer", "explanation", "check"}
 CHECK_KEYS = {"run", "why", "error", "line", "fix", "expect", "wrong", "files"}
 COURSE_KEYS = {"slug", "title", "language", "published"}
+_BODY_CODE = re.compile(r"```[^\n]*\n([\s\S]*?)\n?```")
 _LINE_REF = re.compile(r"(\d+)\s*(?:~\s*(\d+)\s*)?번째\s*줄")
 
 
@@ -411,6 +412,14 @@ def check_course(course, run=True, strict=False):
             report.errors.append(f"{where}: 제목(title)이 비어 있음")
         if not lesson.body_md:
             report.errors.append(f"{where}: 본문(body)이 비어 있음")
+        # 본문 속 코드 상자(``` ... ```)도 폰 화면 폭 규칙을 지킨다
+        if lesson.body_md.count("```") % 2:
+            report.errors.append(f"{where}: 본문의 ``` 가 짝이 맞지 않음 (코드 상자를 열고 닫지 않음)")
+        for block in _BODY_CODE.findall(lesson.body_md):
+            wide = long_code_lines(block)
+            if wide:
+                lines = block.split("\n")
+                report.errors.append(f"{where}: 본문 코드 상자에 폰에서 잘리는 줄 {[lines[i - 1] for i in wide]}")
         if not isinstance(lesson.est_minutes, int) or not 3 <= lesson.est_minutes <= 15:
             report.errors.append(f"{where}: est_minutes {lesson.est_minutes!r}는 3~15분이어야 함")
         if not isinstance(lesson.is_published, bool):
