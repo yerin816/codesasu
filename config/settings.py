@@ -46,6 +46,12 @@ if not DEBUG:
     SECURE_CONTENT_TYPE_NOSNIFF = True
     SECURE_SSL_REDIRECT = True     # http로 들어오면 https로 보낸다
     # HSTS(브라우저에 https만 쓰라고 기억시키기)는 잘못 걸면 되돌리기 어려워 실제 주소를 정한 뒤 따로 켠다
+    # 로그인 시도 제한을 IP별로 세려면 진짜 접속 IP가 필요하다. Cloud Run 앞단(구글 프런트엔드)이
+    # X-Forwarded-For 맨 끝에 접속 IP를 붙여 주므로 프록시 1단계를 믿는다
+    ALLAUTH_TRUSTED_PROXY_COUNT = 1
+
+# 관리자 화면 주소. 배포에서는 환경변수로 짐작하기 어려운 주소를 쓴다 (예: manage-7f3k/)
+ADMIN_PATH = os.getenv("ADMIN_PATH", "admin/").strip("/") + "/"
 
 
 # Application definition
@@ -181,3 +187,29 @@ SOCIALACCOUNT_PROVIDERS = {
 LOGIN_REDIRECT_URL = "/"
 ACCOUNT_LOGOUT_REDIRECT_URL = "/"
 EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+
+# ── 캐시: 로그인 시도 제한(allauth)이 횟수를 여기에 센다 ──────────
+# 서버 메모리가 아니라 DB에 둬야 gunicorn 작업자 여러 개·재시작 사이에서도 횟수가 이어진다.
+# 표(django_cache)는 마이그레이션 0005가 만든다
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.db.DatabaseCache",
+        "LOCATION": "django_cache",
+    }
+}
+# 로그인 실패: 같은 IP는 1분에 10번, 같은 이메일은 5분에 5번까지 (allauth 기본값을 명시)
+ACCOUNT_RATE_LIMITS = {"login_failed": "10/m/ip,5/300s/key"}
+
+# ── 로그: Cloud Run은 화면 출력(stdout/stderr)을 그대로 로그로 모은다 ──────────
+# 설정이 없으면 DEBUG=False에서 서버 오류(500)의 자세한 내용이 어디에도 남지 않는다
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {"plain": {"format": "%(levelname)s %(name)s: %(message)s"}},
+    "handlers": {"console": {"class": "logging.StreamHandler", "formatter": "plain"}},
+    "root": {"handlers": ["console"], "level": "INFO"},
+    "loggers": {
+        # 요청 처리 중 오류(500)는 ERROR로, 잘못된 요청(400·403·404)은 WARNING으로 남는다
+        "django": {"handlers": ["console"], "level": "WARNING", "propagate": False},
+    },
+}

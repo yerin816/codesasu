@@ -642,7 +642,8 @@ class HintCheckCommandTests(TestCase):
 class DeploySettingsTests(SimpleTestCase):
     """배포(DEBUG=False)일 때 보안 설정이 켜지는지, 실제 settings.py를 새 파이썬으로 따로 읽어 확인한다"""
 
-    KEYS = ["DEBUG", "ALLOWED_HOSTS", "CSRF_TRUSTED_ORIGINS", "SECURE_SSL_REDIRECT", "SESSION_COOKIE_SECURE", "CSRF_COOKIE_SECURE"]
+    KEYS = ["DEBUG", "ALLOWED_HOSTS", "CSRF_TRUSTED_ORIGINS", "SECURE_SSL_REDIRECT", "SESSION_COOKIE_SECURE", "CSRF_COOKIE_SECURE",
+            "ALLAUTH_TRUSTED_PROXY_COUNT", "ADMIN_PATH"]
 
     def read_settings(self, **env):
         code = f"import json, config.settings as s; print(json.dumps({{k: getattr(s, k, None) for k in {self.KEYS}}}))"
@@ -660,11 +661,17 @@ class DeploySettingsTests(SimpleTestCase):
         self.assertEqual(s["ALLOWED_HOSTS"], ["codesasu-abc.a.run.app"])
         self.assertEqual(s["CSRF_TRUSTED_ORIGINS"], ["https://codesasu-abc.a.run.app"])
         self.assertTrue(s["SECURE_SSL_REDIRECT"] and s["SESSION_COOKIE_SECURE"] and s["CSRF_COOKIE_SECURE"])
+        self.assertEqual(s["ALLAUTH_TRUSTED_PROXY_COUNT"], 1)  # Cloud Run 앞단 1단계만 믿는다
+
+    def test_admin_path_comes_from_env(self):
+        self.assertEqual(self.read_settings(DEBUG="True")["ADMIN_PATH"], "admin/")
+        self.assertEqual(self.read_settings(DEBUG="False", ADMIN_PATH="/manage-x7/")["ADMIN_PATH"], "manage-x7/")
 
     def test_local_development_keeps_them_off(self):
         s = self.read_settings(DEBUG="True")
         self.assertTrue(s["DEBUG"])
         self.assertFalse(s["SECURE_SSL_REDIRECT"])
+        self.assertIsNone(s["ALLAUTH_TRUSTED_PROXY_COUNT"])
 
 
 class LessonCodeWidthTests(SimpleTestCase):
@@ -691,3 +698,87 @@ class LessonCodeWidthTests(SimpleTestCase):
             q.clean()
         self.assertIn("2번째 줄", str(ctx.exception))
         Question(code="count = 0\nprint(count)").clean()  # 짧은 코드는 통과
+
+
+class AdminSecurityTests(TestCase):
+    """관리자 화면 보호 (6.1): 일반 로그인 화면을 거치고, 비밀번호를 여러 번 틀리면 막힌다"""
+
+    def make_google_user(self, email="owner@example.com"):
+        from allauth.socialaccount.models import SocialAccount
+
+        user = get_user_model().objects.create_user(username="owner", email=email)
+        SocialAccount.objects.create(user=user, provider="google", uid="g-123")
+        return user
+
+    def test_admin_login_goes_through_allauth_login(self):
+        res = self.client.get("/admin/")
+        self.assertEqual(res.status_code, 302)
+        res = self.client.get(res["Location"])
+        self.assertEqual(res.status_code, 302)
+        self.assertTrue(res["Location"].startswith("/accounts/login/"))
+
+    def test_non_staff_gets_403_and_staff_gets_in(self):
+        user = get_user_model().objects.create_user(username="u", email="u@example.com", password="pw-12345678")
+        self.client.force_login(user)
+        self.assertEqual(self.client.get("/admin/login/").status_code, 403)
+        user.is_staff = True
+        user.save()
+        self.assertEqual(self.client.get("/admin/").status_code, 200)
+
+    def test_login_blocked_after_five_wrong_passwords(self):
+        from allauth.account.models import EmailAddress
+
+        user = get_user_model().objects.create_user(username="v", email="v@example.com", password="right-pass-123")
+        EmailAddress.objects.create(user=user, email=user.email, primary=True, verified=True)
+        for _ in range(5):
+            res = self.client.post("/accounts/login/", {"login": "v@example.com", "password": "wrong-pass"})
+            self.assertEqual(res.status_code, 200)
+        # 6번째에는 맞는 비밀번호여도 막힌다
+        res = self.client.post("/accounts/login/", {"login": "v@example.com", "password": "right-pass-123"})
+        self.assertNotIn("_auth_user_id", self.client.session)
+
+    def test_login_works_after_fewer_failures(self):
+        # 대조군: 4번 틀린 뒤에는 맞는 비밀번호로 로그인된다 (위 테스트가 다른 이유로 막힌 게 아님을 확인)
+        from allauth.account.models import EmailAddress
+
+        user = get_user_model().objects.create_user(username="w", email="w@example.com", password="right-pass-123")
+        EmailAddress.objects.create(user=user, email=user.email, primary=True, verified=True)
+        for _ in range(4):
+            self.client.post("/accounts/login/", {"login": "w@example.com", "password": "wrong-pass"})
+        self.client.post("/accounts/login/", {"login": "w@example.com", "password": "right-pass-123"})
+        self.assertEqual(self.client.session.get("_auth_user_id"), str(user.pk))
+
+    def test_grant_admin_only_for_google_linked_user(self):
+        from io import StringIO
+
+        from django.core.management import CommandError, call_command
+
+        get_user_model().objects.create_user(username="p", email="p@example.com", password="x-12345678")
+        with self.assertRaises(CommandError):
+            call_command("grant_admin", "p@example.com", stdout=StringIO())
+        user = self.make_google_user()
+        call_command("grant_admin", "OWNER@example.com", stdout=StringIO())
+        user.refresh_from_db()
+        self.assertTrue(user.is_staff and user.is_superuser)
+
+    def test_grant_admin_from_env_never_fails_startup(self):
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        user = self.make_google_user()
+        out = StringIO()
+        with mock.patch.dict("os.environ", {"ADMIN_EMAILS": "nobody@example.com, owner@example.com"}):
+            call_command("grant_admin", "--from-env", stdout=out)  # 없는 이메일이 섞여도 예외 없이 진행
+        user.refresh_from_db()
+        self.assertTrue(user.is_staff)
+        self.assertIn("건너뜀", out.getvalue())
+        with mock.patch.dict("os.environ", {"ADMIN_EMAILS": ""}):
+            call_command("grant_admin", "--from-env", stdout=StringIO())  # 비어 있어도 그대로 통과
+
+
+class LoggingSettingsTests(SimpleTestCase):
+    def test_server_errors_are_logged_to_console(self):
+        self.assertIn("console", settings.LOGGING["loggers"]["django"]["handlers"])
+        self.assertEqual(settings.LOGGING["root"]["level"], "INFO")
+
