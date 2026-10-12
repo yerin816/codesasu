@@ -10,6 +10,7 @@ import math
 import re
 
 from django.db import connection
+from django.db.models import Q
 
 from .chunks import text_for_embedding
 from .embeddings import embed_texts
@@ -79,12 +80,13 @@ def _cosine_distance(a, b):
 
 
 def find_sources(question, k=TOP_K):
-    """같은 과정의 공개 레슨 조각 중 문제와 가장 가까운 k개.
+    """같은 과정의 공개 레슨(과 이 문제의 레슨) 조각 중 문제와 가장 가까운 k개.
     PostgreSQL(Supabase)은 pgvector로 DB 안에서 찾고, 테스트용 SQLite는 파이썬으로 계산한다."""
     vector = question_vector(question)
+    # 공개 레슨 + 이 문제의 레슨 자신 (관리자가 초안을 미리 풀 때도 자기 본문을 근거로 쓰게)
     chunks = LessonChunk.objects.filter(
+        Q(lesson__is_published=True) | Q(lesson_id=question.lesson_id),
         lesson__course_id=question.lesson.course_id,
-        lesson__is_published=True,
         lesson__kind=Lesson.Kind.LESSON,
     ).select_related("lesson")
     if connection.vendor == "postgresql":

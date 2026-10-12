@@ -152,7 +152,9 @@ async function initLesson() {
 
   state.lesson = res.data;
   const l = state.lesson;
-  intro.innerHTML = `<p class="tag">${esc(TRACK[l.track] || "")} · 약 ${esc(l.est_minutes)}분</p>
+  const preview = l.is_preview
+    ? `<p class="preview-note">미리보기: 공개 전 초안이에요. 관리자에게만 보여요.</p>` : "";
+  intro.innerHTML = `${preview}<p class="tag">${esc(TRACK[l.track] || "")} · 약 ${esc(l.est_minutes)}분</p>
     <h1>${esc(l.title)}</h1>
     <div class="body">${markdown(l.body_md)}</div>`;
   setActions([{ label: `문제 풀기 (${l.questions.length}문제)`, onClick: startQuiz }]);

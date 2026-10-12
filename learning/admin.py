@@ -1,4 +1,6 @@
 from django.contrib import admin
+from django.urls import reverse
+from django.utils.html import format_html
 
 from .models import AnswerAttempt, Course, ExplanationReveal, HintRequest, Lesson, LessonProgress, Question
 
@@ -28,13 +30,19 @@ class CourseAdmin(admin.ModelAdmin):
 
 @admin.register(Lesson)
 class LessonAdmin(admin.ModelAdmin):
-    list_display = ["order_no", "title", "track", "est_minutes", "is_published"]
+    list_display = ["order_no", "title", "track", "est_minutes", "is_published", "app_link"]
     list_filter = ["course", "track", "is_published"]
     inlines = [QuestionInline]
     readonly_fields = ["course", "order_no", "kind", "track", "title", "body_md", "est_minutes", "is_published"]
 
     def has_add_permission(self, request):
         return False
+
+    @admin.display(description="앱 화면")
+    def app_link(self, obj):
+        # 관리자 계정이면 공개 전 초안도 실제 레슨 화면으로 열린다 (폰 점검용)
+        label = "미리보기" if not obj.is_published else "열기"
+        return format_html('<a href="{}" target="_blank" rel="noopener">{}</a>', reverse("lesson", args=[obj.id]), label)
 
     def changelist_view(self, request, extra_context=None):
         from django.contrib import messages

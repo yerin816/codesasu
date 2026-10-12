@@ -331,3 +331,14 @@ pre.code {
   /* 넓은 PC: 본문을 가리지 않게 오른쪽 아래에 고정 (본문 오른쪽 끝과 겹치지 않는 너비부터) */
   .sasu { left: auto; right: 24px; transform: none; bottom: calc(var(--bar-h) + 16px); width: 360px; border-radius: 18px; }
 }
+
+/* 관리자 초안 미리보기 표시 (레슨 공개 전 폰 점검) */
+.preview-note {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border: 1.5px dashed var(--accent);
+  border-radius: 10px;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 700;
+}

@@ -1121,3 +1121,78 @@ class LessonAdminReadOnlyTests(TestCase):
         self.assertEqual(page.status_code, 200)
         self.assertNotContains(page, 'name="title"')  # 입력칸이 없다
         self.assertEqual(self.client.get(f"{base}add/").status_code, 403)
+
+
+class DraftPreviewTests(ApiTestCase):
+    """관리자는 공개 전 초안 레슨을 실제 화면으로 미리 풀고, 다른 사람에게는 보이지 않는다"""
+
+    def setUp(self):
+        from .models import Question
+
+        self.draft = Lesson.objects.create(course_id=1, order_no=3, track="reading", title="초안 레슨",
+                                           body_md="초안 본문이에요.", is_published=False)
+        self.q = Question.objects.create(lesson=self.draft, order_no=1, qtype="predict", prompt="p", code="print(1)",
+                                         choices=["1", "2", "3", "4"], answer=1, explanation="e")
+        User = get_user_model()
+        self.staff = User.objects.create_user("staff", "staff@example.com", "pw-unused-123", is_staff=True)
+        self.member = User.objects.create_user("member", "member@example.com", "pw-unused-123")
+
+    def as_user(self, user):
+        c = Client()
+        c.force_login(user)
+        return c
+
+    def test_staff_sees_draft_with_preview_flag(self):
+        c = self.as_user(self.staff)
+        res = c.get(f"/api/v1/lessons/{self.draft.id}")
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.json()["is_preview"])
+        self.assertFalse(c.get("/api/v1/lessons/1").json()["is_preview"])
+
+    def test_draft_hidden_from_members_and_guests(self):
+        self.assertEqual(self.as_user(self.member).get(f"/api/v1/lessons/{self.draft.id}").status_code, 404)
+        self.assertEqual(self.client.get(f"/api/v1/lessons/{self.draft.id}").status_code, 404)
+        res = self.post(f"/api/v1/lessons/{self.draft.id}/progress", client=self.as_user(self.member))
+        self.assertEqual(res.status_code, 404)
+
+    def test_staff_can_solve_draft(self):
+        c = self.as_user(self.staff)
+        pid = self.start(self.draft.id, client=c)
+        self.assertTrue(self.answer(pid, self.q.id, 1, client=c).json()["is_correct"])
+        self.assertEqual(self.post(f"/api/v1/progress/{pid}/complete", client=c).status_code, 200)
+
+    def test_today_never_offers_draft(self):
+        c = self.as_user(self.staff)
+        for lesson_id in (1, 2):
+            pid = self.start(lesson_id, client=c)
+            for qid in LESSON_QUESTIONS[lesson_id]:
+                self.answer(pid, qid, ANSWERS[qid], client=c)
+            self.post(f"/api/v1/progress/{pid}/complete", client=c)
+        self.assertIsNone(c.get("/api/v1/today").json()["lesson"])
+
+    def test_hint_sources_include_own_draft_but_not_other_drafts(self):
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        from . import hints
+        from .models import Question
+
+        other = Lesson.objects.create(course_id=1, order_no=4, track="reading", title="다른 초안",
+                                      body_md="다른 초안 본문이에요.", is_published=False)
+        with mock.patch("learning.management.commands.ingest_chunks.embed_texts", side_effect=fake_embed):
+            call_command("ingest_chunks", stdout=StringIO())
+        hints._question_vectors.clear()
+        with mock.patch("learning.hints.embed_texts", side_effect=fake_embed):
+            draft_ids = {c.lesson_id for c in hints.find_sources(self.q, k=10)}
+            public_ids = {c.lesson_id for c in hints.find_sources(Question.objects.get(pk=1), k=10)}
+        self.assertIn(self.draft.id, draft_ids)
+        self.assertNotIn(other.id, draft_ids)
+        self.assertNotIn(self.draft.id, public_ids)
+
+    def test_admin_list_links_to_app_preview(self):
+        admin_user = get_user_model().objects.create_superuser("boss", "boss@example.com", "pw-unused-123")
+        c = self.as_user(admin_user)
+        page = c.get(f"/{settings.ADMIN_PATH}learning/lesson/")
+        self.assertContains(page, f'href="/lessons/{self.draft.id}/"')
+        self.assertContains(page, "미리보기")

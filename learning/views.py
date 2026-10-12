@@ -72,6 +72,19 @@ def published_lessons():
     )
 
 
+def openable_lessons(request):
+    """레슨 화면·풀이 시작에서 열 수 있는 레슨.
+    관리자(is_staff)는 공개 전 초안도 실제 화면으로 미리 본다 (레슨 공개 전 폰 점검).
+    오늘의 레슨(today)은 항상 공개 레슨에서만 고른다."""
+    if request.user.is_authenticated and request.user.is_staff:
+        return Lesson.objects.filter(kind=Lesson.Kind.LESSON)
+    return published_lessons()
+
+
+def is_preview(lesson):
+    return not (lesson.is_published and lesson.course.is_published)
+
+
 def first_lesson():
     return published_lessons().first()
 
@@ -142,7 +155,7 @@ def today(request):
 @require_GET
 def lesson_detail(request, lesson_id):
     """GET /api/v1/lessons/{id} : 레슨 본문과 문제. 정답·해설은 보내지 않는다 (FR-05)"""
-    lesson = published_lessons().filter(id=lesson_id).first()
+    lesson = openable_lessons(request).select_related("course").filter(id=lesson_id).first()
     if lesson is None:
         return error("NOT_FOUND", "레슨을 찾을 수 없어요.", 404)
     if not can_open(request, lesson):
@@ -163,13 +176,14 @@ def lesson_detail(request, lesson_id):
         **lesson_brief(lesson),
         "body_md": lesson.body_md,
         "questions": questions,
+        "is_preview": is_preview(lesson),  # 관리자가 공개 전 초안을 보는 중
     })
 
 
 @require_POST
 def start_progress(request, lesson_id):
     """POST /api/v1/lessons/{id}/progress : 풀이 시작. 다시 풀면 새 기록 (FR-07)"""
-    lesson = published_lessons().filter(id=lesson_id).first()
+    lesson = openable_lessons(request).filter(id=lesson_id).first()
     if lesson is None:
         return error("NOT_FOUND", "레슨을 찾을 수 없어요.", 404)
     if not can_open(request, lesson):
