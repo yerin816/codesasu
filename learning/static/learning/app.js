@@ -188,7 +188,10 @@ function showQuestion() {
   $("#q-count").textContent = `문제 ${state.idx + 1} / ${total} · ${QTYPE[q.qtype] || ""}`;
   $("#q-prompt").innerHTML = inline(q.prompt);
   const code = $("#q-code");
-  code.textContent = q.code || "";
+  // 줄 번호를 붙인다. 선택지·해설이 'N번째 줄'로 말하므로 사용자가 줄을 세지 않게 (10/12 폰 점검)
+  code.innerHTML = (q.code || "").split("\n")
+    .map((line, i) => `<span class="ln" aria-hidden="true">${i + 1}</span>${esc(line)}`)
+    .join("\n");
   code.hidden = !q.code;
   code.scrollLeft = 0;
   fitCode();

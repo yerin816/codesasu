@@ -108,8 +108,10 @@ def week_summary(user):
     """이번 주(월요일 시작, 한국 시간) 레슨을 끝낸 날 수. 하루에 여러 개 끝내도 1일 (FR-11)."""
     today = timezone.localdate()
     monday = today - timedelta(days=today.weekday())
+    # 관리자가 공개 전 초안을 미리 푼 기록은 주간 목표에 넣지 않는다
     completed = LessonProgress.objects.filter(
-        user=user, completed_at__date__gte=monday
+        user=user, completed_at__date__gte=monday,
+        lesson__is_published=True, lesson__course__is_published=True,
     ).values_list("completed_at", flat=True)
     done_days = {timezone.localtime(t).date() for t in completed}
     return {"done_days": len(done_days), "goal_days": DEFAULT_WEEKLY_GOAL_DAYS}

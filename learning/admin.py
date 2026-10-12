@@ -30,7 +30,8 @@ class CourseAdmin(admin.ModelAdmin):
 
 @admin.register(Lesson)
 class LessonAdmin(admin.ModelAdmin):
-    list_display = ["order_no", "title", "track", "est_minutes", "is_published", "app_link"]
+    # 폰에서 표가 옆으로 길어 미리보기 링크가 안 보여서 번호 바로 옆에 둔다 (10/12 폰 점검)
+    list_display = ["order_no", "app_link", "is_published", "title", "track", "est_minutes"]
     list_filter = ["course", "track", "is_published"]
     inlines = [QuestionInline]
     readonly_fields = ["course", "order_no", "kind", "track", "title", "body_md", "est_minutes", "is_published"]

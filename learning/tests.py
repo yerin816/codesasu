@@ -1161,6 +1161,13 @@ class DraftPreviewTests(ApiTestCase):
         self.assertTrue(self.answer(pid, self.q.id, 1, client=c).json()["is_correct"])
         self.assertEqual(self.post(f"/api/v1/progress/{pid}/complete", client=c).status_code, 200)
 
+    def test_draft_completion_not_counted_in_week(self):
+        c = self.as_user(self.staff)
+        pid = self.start(self.draft.id, client=c)
+        self.answer(pid, self.q.id, 1, client=c)
+        res = self.post(f"/api/v1/progress/{pid}/complete", client=c).json()
+        self.assertEqual(res["week"]["done_days"], 0)
+
     def test_today_never_offers_draft(self):
         c = self.as_user(self.staff)
         for lesson_id in (1, 2):
