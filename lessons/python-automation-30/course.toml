@@ -1,0 +1,5 @@
+# 과정 정보. 폴더 이름이 slug와 같아야 한다
+slug = "python-automation-30"
+title = "파이썬 업무 자동화 30일"
+language = "python"
+published = true

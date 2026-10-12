@@ -1,0 +1,56 @@
+# L05 초안 (10/12) - 검토 후 published = true로 바꾸면 공개
+order_no = 5
+track = "reading"
+title = "합계는 이름표 붙인 상자에 쌓는다"
+est_minutes = 9
+published = false
+body = '''
+부서별·거래처별 합계를 낼 때 AI는 `{}`(딕셔너리)를 자주 써요. 딕셔너리는 이름표(키)와 값을 짝지어 담는 상자 묶음이에요. `sums["영업"]`은 '영업' 이름표가 붙은 상자의 값이에요.
+
+`sums.get(team, 0)`은 team 이름표의 값을 꺼내되, 아직 그 이름표가 없으면 0을 돌려줘요. 그래서 `sums[team] = sums.get(team, 0) + amount`는 '지금까지 쌓인 값(처음이면 0)에 이번 금액을 더해 다시 넣는다'는 뜻이에요.
+
+`get` 없이 `sums[team] += amount`라고 쓰면, 처음 나온 부서는 상자가 아직 없어서 KeyError가 나요.
+
+`for team, total in sums.items():`는 상자를 하나씩 꺼내 이름표는 team, 값은 total에 담아요. 결과를 예측할 때는 종이에 이름표별 칸을 그리고, 행을 하나씩 따라가며 칸의 숫자를 고쳐 보세요.
+'''
+
+[[questions]]
+qtype = "predict"
+prompt = "부서별 경비 합계를 내는 코드예요. 실행하면 무엇이 출력될까요?"
+code = '''
+expenses = [
+    {"부서": "영업", "금액": 30},
+    {"부서": "인사", "금액": 20},
+    {"부서": "영업", "금액": 50},
+]
+sums = {}
+for e in expenses:
+    team = e["부서"]
+    amount = e["금액"]
+    sums[team] = sums.get(team, 0) + amount
+print(sums["영업"])
+'''
+choices = ["50", "80", "100", "30"]
+answer = 2
+explanation = "영업 칸은 처음에 없어서 0+30=30, 인사 행은 다른 칸이라 건너뛰고, 세 번째 행에서 30+50=80이 돼요. ①은 마지막 금액으로 덮어쓴다고 본 경우, ③은 인사 금액까지 더한 경우, ④는 첫 행에서 멈춘다고 본 경우예요."
+
+[[questions]]
+qtype = "flow"
+prompt = "부서별 합계를 출력하는 코드예요(expenses는 위 문제와 같은 표). 하는 일을 순서대로 맞게 설명한 것은?"
+code = '''
+sums = {}
+for e in expenses:
+    team = e["부서"]
+    amount = e["금액"]
+    sums[team] = sums.get(team, 0) + amount
+for team, total in sums.items():
+    print(team, total)
+'''
+choices = [
+    "행마다 합계를 계산해 바로바로 출력한다",
+    "부서가 처음 나올 때만 금액을 넣고, 같은 부서가 또 나오면 건너뛴다",
+    "모든 행의 금액을 하나로 더해 전체 합계 한 줄만 출력한다",
+    "행마다 부서 칸에 금액을 쌓아 두고 → 다 끝나면 부서별 합계를 한 줄씩 출력한다",
+]
+answer = 4
+explanation = "첫 번째 for는 행마다 부서 칸에 금액을 더하기만 하고, 출력은 두 번째 for에서 칸마다 한 번씩 해요. 그래서 '영업 80', '인사 20' 두 줄이 나와요. ①은 print가 첫 번째 for 안에 있다고 본 경우, ②는 get(team, 0)이 처음에만 쓰인다고 본 경우, ③은 부서 이름표를 놓친 경우예요."

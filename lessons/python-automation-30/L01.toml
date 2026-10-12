@@ -1,0 +1,66 @@
+# L01. 문제 순서 = 파일 안 [[questions]] 순서
+order_no = 1
+track = "reading"
+title = "반복문은 한 행씩, 들여쓴 줄만 되풀이한다"
+est_minutes = 8
+published = true
+body = '''
+GPT가 짜 준 업무 코드에서 표는 주로 `[ ]` 안에 `{ }`가 여러 개 들어간 모양이에요. `{ }` 하나가 엑셀의 한 행이고, 따옴표 안의 이름(예: "부서")이 열 이름이에요.
+
+`for person in staff:`는 표에서 한 행씩 꺼내 person이라는 이름을 붙이는 줄이에요. 그 아래 들여쓴 줄만 행마다 반복되고, 들여쓰기가 끝난 줄은 반복이 모두 끝난 뒤 한 번만 실행돼요.
+
+`if` 줄은 조건이 참일 때만 그 아래 들여쓴 줄을 실행해요. `and`는 양쪽 조건이 모두 참이어야 하고, `or`는 하나만 참이어도 돼요. `>=`는 '이상'이라 같은 값도 포함하고, `>`는 '초과'라 같은 값은 빠져요.
+
+`count += 1`은 count에 1을 더하라는 뜻이에요. 결과를 예측할 때는 행을 하나씩 조건에 넣어 보면서 손으로 따라가 보세요.
+'''
+
+[[questions]]
+qtype = "predict"
+prompt = "영업팀에서 연차 5년 이상인 사람 수를 세는 코드예요. 실행하면 무엇이 출력될까요?"
+code = '''
+staff = [
+    {"부서": "영업", "연차": 3},
+    {"부서": "인사", "연차": 7},
+    {"부서": "영업", "연차": 5},
+]
+count = 0
+for person in staff:
+    team = person["부서"]
+    years = person["연차"]
+    if team == "영업" and years >= 5:
+        count += 1
+print(count)
+'''
+choices = [
+    "0",
+    "1",
+    "2",
+    "3",
+]
+answer = 2
+explanation = "두 조건을 모두 만족하는 사람은 세 번째 줄(영업, 연차 5) 한 명이라 1이다. >=는 '이상'이라 5도 포함된다. ①은 5를 뺀 경우(>로 읽음), ③은 연차 조건을 놓친 경우, ④는 and를 '둘 중 하나'(or)로 읽은 경우다"
+
+[[questions]]
+qtype = "flow"
+prompt = "팀원들이 보낸 엑셀 파일을 하나로 합치는 코드예요. glob.glob은 폴더에서 파일 목록을 찾고, pd.concat은 여러 표를 하나로 합쳐요. 하는 일을 순서대로 맞게 설명한 것은?"
+code = '''
+import glob
+import pandas as pd
+
+files = glob.glob("팀별_보고서/*.xlsx")
+frames = []
+for f in files:
+    df = pd.read_excel(f)
+    frames.append(df)
+result = pd.concat(frames)
+save_as = "전체_취합.xlsx"
+result.to_excel(save_as, index=False)
+'''
+choices = [
+    "폴더의 엑셀 파일 목록을 만든다 → 하나씩 읽어 모은다 → 한 표로 합친다 → 새 파일로 저장한다",
+    "파일을 하나 읽을 때마다 바로 '전체_취합.xlsx'에 저장한다",
+    "파일을 먼저 모두 합친 다음 폴더에서 파일 목록을 찾는다",
+    "합친 표를 원래 팀별 파일 위에 덮어써서 저장한다",
+]
+answer = 1
+explanation = "for 아래 들여쓴 두 줄(읽기·모으기)만 파일 수만큼 반복되고, 합치기와 저장은 반복이 끝난 뒤 한 번 실행된다. ②는 저장 줄도 반복 안에 있다고 본 경우, ③은 순서를 거꾸로 읽은 경우다. ④ 코드는 '전체_취합.xlsx'라는 새 파일로 저장해 팀별 파일은 그대로 남는다"

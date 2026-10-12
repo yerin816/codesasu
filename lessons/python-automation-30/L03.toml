@@ -1,0 +1,90 @@
+# L03 초안 (10/12) - 검토 후 published = true로 바꾸면 공개
+order_no = 3
+track = "reading"
+title = "조건은 위에서부터, 처음 맞는 칸 하나만 탄다"
+est_minutes = 9
+published = false
+body = '''
+`if`·`elif`·`else`는 위에서부터 차례로 조건을 확인해요. 처음으로 참인 조건을 만나면 그 아래 들여쓴 줄만 실행하고, 나머지 `elif`·`else`는 확인하지 않고 건너뛰어요.
+
+그래서 범위가 겹치는 조건은 순서가 중요해요. `score >= 70`이 `score >= 90`보다 위에 있으면 95점도 첫 조건에서 걸려요. 기준이 큰 조건부터 위에 적어야 해요.
+
+`else`는 위 조건이 모두 거짓일 때만 실행돼요. 조건 줄 끝의 `:`와 그 아래 들여쓴 줄이 한 묶음이에요.
+
+결과를 예측할 때는 값을 하나 정해 위에서부터 조건에 넣어 보고, 처음 참이 되는 곳에서 멈추면 돼요.
+'''
+
+[[questions]]
+qtype = "predict"
+prompt = "성과 점수로 등급을 매기는 코드예요. 실행하면 무엇이 출력될까요?"
+code = '''
+score = 92
+if score >= 70:
+    grade = "B"
+elif score >= 90:
+    grade = "A"
+else:
+    grade = "C"
+print(grade)
+'''
+choices = ["A", "B", "C", "AB"]
+answer = 2
+explanation = "92는 첫 조건 score >= 70에서 이미 참이라 B가 되고, 아래 elif는 확인하지 않아요. ①은 더 잘 맞는 조건을 골라 준다고 본 경우, ③은 순서가 꼬이면 else로 간다고 본 경우, ④는 참인 조건을 모두 실행한다고 본 경우예요."
+
+[[questions]]
+qtype = "fix_line"
+prompt = "5만 원 이상은 무료배송인데, 6만 원 주문에 배송비 1000원이 붙어요. 어떻게 고쳐야 할까요?"
+code = '''
+price = 60000
+if price >= 30000:
+    fee = 1000
+elif price >= 50000:
+    fee = 0
+else:
+    fee = 3000
+print("배송비:", fee)
+'''
+choices = [
+    "1번째 줄의 주문 금액을 50000으로 바꾼다",
+    "2번째 줄의 >=를 >로 바꾼다",
+    "2~5번째 줄에서 50000 조건을 30000 조건보다 위로 올린다",
+    "7번째 줄의 3000을 0으로 바꾼다",
+]
+answer = 3
+explanation = "60000은 첫 조건 price >= 30000에서 참이 되어 1000이 정해지고 멈춰요. 기준이 큰 50000 조건을 위로 올리면 60000은 0, 4만 원은 1000이 나와요. ① 주문 금액은 데이터라 고칠 대상이 아니고, 50000도 첫 조건에서 걸려요. ② >로 바꿔도 60000은 30000보다 커서 그대로예요. ④ else는 3만 원 미만일 때만 실행돼서 이 주문과 상관없어요."
+
+# 정답대로 고치면 0, 오답대로 고치면 여전히 1000이 나와야 한다
+[questions.check]
+line = [2, 5]
+fix = '''
+if price >= 50000:
+    fee = 0
+elif price >= 30000:
+    fee = 1000
+'''
+expect = "배송비: 0"
+wrong = [
+    { choice = 1, line = 1, fix = "price = 50000" },
+    { choice = 2, line = 2, fix = "if price > 30000:" },
+    { choice = 4, line = 7, fix = "    fee = 0" },
+]
+
+[[questions]]
+qtype = "predict"
+prompt = "근태 기록으로 안내 문구를 고르는 코드예요. 실행하면 무엇이 출력될까요?"
+code = '''
+late = 0
+absent = 2
+if late >= 3:
+    msg = "지각 경고"
+elif absent >= 1:
+    msg = "결근 확인"
+elif late == 0:
+    msg = "개근"
+else:
+    msg = "정상"
+print(msg)
+'''
+choices = ["개근", "지각 경고", "정상", "결근 확인"]
+answer = 4
+explanation = "late가 0이라 첫 조건은 거짓이고, absent가 2라 두 번째 조건에서 참이 되어 '결근 확인'으로 정해지고 멈춰요. ① late == 0도 참이지만 위에서 이미 멈춰 확인하지 않아요. ② 지각은 0번이라 3번 이상이 아니에요. ③ else는 위 조건이 모두 거짓일 때만 실행돼요."

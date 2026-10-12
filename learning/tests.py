@@ -807,3 +807,317 @@ class LoggingSettingsTests(SimpleTestCase):
         self.assertIn("console", settings.LOGGING["loggers"]["django"]["handlers"])
         self.assertEqual(settings.LOGGING["root"]["level"], "INFO")
 
+
+
+# ---------------------------------------------------------------- 레슨 파일 (WBS 2.4)
+
+GOOD_LESSON = '''
+order_no = 1
+track = "reading"
+title = "테스트 레슨"
+est_minutes = 8
+published = true
+body = "본문이에요."
+
+[[questions]]
+qtype = "predict"
+prompt = "무엇이 나올까요?"
+code = """
+total = 0
+for n in [1, 2, 3]:
+    total += n
+print(total)"""
+choices = ["3", "6", "5", "0"]
+answer = 2
+explanation = "1+2+3이라 6이에요."
+
+[[questions]]
+qtype = "error"
+prompt = "왜 에러가 날까요?"
+code = """
+row = {"부서명": "영업"}
+print(row["부서"])"""
+choices = ["열 이름이 없다", "한글이라서", "숫자라서", "파일이 없다"]
+answer = 1
+explanation = "부서라는 키가 없어요."
+check = { error = "KeyError" }
+
+[[questions]]
+qtype = "fix_line"
+prompt = "합계가 마지막 값만 나와요. 어디를 고칠까요?"
+code = """
+for n in [1, 2, 3]:
+    total = 0
+    total += n
+print(total)"""
+choices = ["1번째 줄", "2번째 줄을 반복문 위로 옮긴다", "3번째 줄", "4번째 줄"]
+answer = 2
+explanation = "2번째 줄이 반복마다 0으로 되돌려요."
+check = { line = [1, 2], fix = "total = 0\\nfor n in [1, 2, 3]:", expect = "6", wrong = [ { choice = 4, line = 4, fix = "print(total + 1)" } ] }
+'''
+
+
+class LessonFileCheckTests(SimpleTestCase):
+    """레슨 파일 검사기가 실제로 틀린 레슨을 잡는지 (python -m learning.lesson_files)"""
+
+    def make(self, lesson_text, course_text='slug = "t"\ntitle = "테스트 과정"\npublished = true\n'):
+        import tempfile
+        from pathlib import Path
+
+        root = Path(tempfile.mkdtemp())
+        course = root / "t"
+        course.mkdir()
+        (course / "course.toml").write_text(course_text, encoding="utf-8")
+        (course / "L01.toml").write_text(lesson_text, encoding="utf-8")
+        return root
+
+    def check(self, lesson_text, **kw):
+        from .lesson_files import check_all
+
+        return check_all(self.make(lesson_text), **kw)[1]
+
+    def test_repository_lessons_pass(self):
+        from .lesson_files import check_all
+
+        courses, report = check_all()
+        self.assertTrue(report.ok, report.errors)
+        self.assertGreaterEqual(len(courses[0].lessons), 2)
+
+    def test_good_lesson_runs_every_check(self):
+        report = self.check(GOOD_LESSON)
+        self.assertEqual(report.errors, [])
+        text = "\n".join(report.lines)
+        self.assertIn("실제 출력 '6' = 정답 2번", text)
+        self.assertIn("KeyError: '부서'", text)
+        self.assertIn("고친 뒤 '6'", text)
+        self.assertIn("오답 4번", text)
+
+    def test_wrong_predict_answer_is_caught(self):
+        report = self.check(GOOD_LESSON.replace("answer = 2\nexplanation = \"1+2+3", "answer = 3\nexplanation = \"1+2+3"))
+        self.assertTrue(any("실제 출력 '6'" in e and "2번 선택지" in e for e in report.errors), report.errors)
+
+    def test_wrong_error_type_is_caught(self):
+        report = self.check(GOOD_LESSON.replace('error = "KeyError"', 'error = "TypeError"'))
+        self.assertTrue(any("TypeError가 나야 하는데" in e for e in report.errors), report.errors)
+
+    def test_fix_that_does_not_fix_is_caught(self):
+        report = self.check(GOOD_LESSON.replace('expect = "6"', 'expect = "7"'))
+        self.assertTrue(any("정답대로 고쳐도" in e for e in report.errors), report.errors)
+
+    def test_wrong_choice_that_also_works_is_caught(self):
+        report = self.check(GOOD_LESSON.replace('fix = "print(total + 1)"', 'fix = "print(6)"'))
+        self.assertTrue(any("정답이 2개" in e for e in report.errors), report.errors)
+
+    def test_phone_width_line_reference_and_choices(self):
+        long_code = GOOD_LESSON.replace('print(row["부서"])', 'print(row["부서"], "아주아주아주아주아주아주아주긴줄")')
+        self.assertTrue(any("잘리는 줄 [2]" in e for e in self.check(long_code, run=False).errors))
+
+        bad_ref = GOOD_LESSON.replace('"4번째 줄"]', '"9번째 줄"]')
+        self.assertTrue(any("'9번째 줄'" in e for e in self.check(bad_ref, run=False).errors))
+
+        three = GOOD_LESSON.replace('choices = ["3", "6", "5", "0"]', 'choices = ["3", "6", "5"]')
+        self.assertTrue(any("선택지는" in e for e in self.check(three, run=False).errors))
+
+        same = GOOD_LESSON.replace('choices = ["3", "6", "5", "0"]', 'choices = ["3", "6", "6", "0"]')
+        self.assertTrue(any("같은 내용" in e for e in self.check(same, run=False).errors))
+
+    def test_unknown_key_is_caught(self):
+        typo = GOOD_LESSON.replace("published = true", "publshed = true")
+        self.assertTrue(any("publshed" in e for e in self.check(typo, run=False).errors))
+        stray = GOOD_LESSON + '\n[check]\nerror = "KeyError"\n'
+        self.assertTrue(any("'check'" in e for e in self.check(stray, run=False).errors))
+        bad_check = GOOD_LESSON.replace('check = { error = "KeyError" }', 'check = { eror = "KeyError" }')
+        self.assertTrue(any("check.eror" in e for e in self.check(bad_check, run=False).errors))
+
+    def test_lesson_number_and_file_name(self):
+        report = self.check(GOOD_LESSON.replace("order_no = 1", "order_no = 2"), run=False)
+        self.assertTrue(any("1부터 빈칸 없이" in e for e in report.errors), report.errors)
+        self.assertTrue(any("L02.toml이어야" in e for e in report.errors), report.errors)
+
+    def test_skipped_question_fails_only_in_strict(self):
+        from unittest import mock as _mock
+
+        from . import lesson_files
+
+        with _mock.patch.object(lesson_files, "_missing_module", return_value="pandas"):
+            normal = self.check(GOOD_LESSON)
+            strict = self.check(GOOD_LESSON, strict=True)
+        self.assertTrue(normal.ok)
+        self.assertEqual(len(normal.skipped), 3)
+        self.assertFalse(strict.ok)
+
+    def test_command_line_exit_code(self):
+        from .lesson_files import main
+
+        with mock.patch("sys.stdout"):
+            self.assertEqual(main(["--dir", str(self.make(GOOD_LESSON))]), 0)
+            bad = GOOD_LESSON.replace('error = "KeyError"', 'error = "TypeError"')
+            self.assertEqual(main(["--dir", str(self.make(bad))]), 1)
+
+    def test_files_match_sample_fixture(self):
+        """L01·L02 파일과 테스트용 fixture 내용이 같아야 한다 (한쪽만 고치는 실수 방지)"""
+        from pathlib import Path
+
+        from .lesson_files import load_all
+
+        lessons = {l.order_no: l for l in load_all()[0].lessons}
+        data = json.loads((Path(__file__).parent / "fixtures" / "sample_lessons.json").read_text(encoding="utf-8"))
+        lesson_no = {}
+        for obj in data:
+            f = obj["fields"]
+            if obj["model"] == "learning.lesson":
+                lesson_no[obj["pk"]] = f["order_no"]
+                l = lessons[f["order_no"]]
+                self.assertEqual((l.track, l.title, l.body_md, l.est_minutes, l.is_published),
+                                 (f["track"], f["title"], f["body_md"], f["est_minutes"], f["is_published"]))
+            elif obj["model"] == "learning.question":
+                q = lessons[lesson_no[f["lesson"]]].questions[f["order_no"] - 1]
+                self.assertEqual((q.qtype, q.prompt, q.code, q.choices, q.answer, q.explanation),
+                                 (f["qtype"], f["prompt"], f["code"], f["choices"], f["answer"], f["explanation"]))
+
+
+class SyncLessonsTests(TestCase):
+    """python manage.py sync_lessons : 파일 → DB 반영. 풀이 기록은 지키고 바뀐 것만 고친다"""
+
+    fixtures = ["sample_lessons"]
+
+    def setUp(self):
+        import shutil
+        import tempfile
+        from pathlib import Path
+
+        from .lesson_files import LESSONS_DIR
+
+        self.root = Path(tempfile.mkdtemp())
+        shutil.copytree(LESSONS_DIR / "python-automation-30", self.root / "python-automation-30")
+        self.course_dir = self.root / "python-automation-30"
+        # 저장소의 초안 레슨(L03~)은 빼고 fixture와 같은 L01·L02만 남긴다
+        for p in self.course_dir.glob("L*.toml"):
+            if p.name not in ("L01.toml", "L02.toml"):
+                p.unlink()
+
+    def sync(self, *extra):
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        out = StringIO()
+        call_command("sync_lessons", "--dir", str(self.root), "--no-chunks", *extra, stdout=out)
+        return out.getvalue()
+
+    def edit(self, name, old, new):
+        p = self.course_dir / name
+        text = p.read_text(encoding="utf-8")
+        self.assertIn(old, text)
+        p.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+    def test_files_equal_current_db(self):
+        self.assertIn("새로 0개, 바뀜 0개, 그대로 6개", self.sync())  # 레슨 2 + 문제 4
+
+    def test_update_keeps_attempts(self):
+        from .models import Question
+
+        progress = LessonProgress.objects.create(guest_key="g", lesson_id=1)
+        AnswerAttempt.objects.create(progress=progress, question_id=1, selected=2, is_correct=True)
+        self.edit("L01.toml", 'title = "반복문은', 'title = "반복문은 꼭')
+        self.edit("L01.toml", "영업팀에서 연차", "영업팀에서 근속")
+        out = self.sync()
+        self.assertIn("바뀜 2개", out)
+        self.assertEqual(Lesson.objects.get(pk=1).title[:6], "반복문은 꼭")
+        self.assertIn("근속", Question.objects.get(pk=1).prompt)
+        self.assertEqual(AnswerAttempt.objects.filter(question_id=1).count(), 1)  # 기록이 그대로
+
+    def test_new_draft_lesson_is_created_unpublished(self):
+        (self.course_dir / "L03.toml").write_text(GOOD_LESSON.replace("order_no = 1", "order_no = 3")
+                                                  .replace("published = true", "published = false"), encoding="utf-8")
+        out = self.sync()
+        self.assertIn("+ L03 테스트 레슨", out)
+        lesson = Lesson.objects.get(order_no=3)
+        self.assertFalse(lesson.is_published)
+        self.assertEqual(lesson.questions.count(), 3)
+        self.assertEqual(Lesson.objects.filter(is_published=True).count(), 2)  # 초안은 사용자에게 안 보임
+
+    def test_removed_question(self):
+        from .models import Question
+
+        text = (self.course_dir / "L02.toml").read_text(encoding="utf-8")
+        cut = text.index("[[questions]]", text.index("[[questions]]") + 1)
+        (self.course_dir / "L02.toml").write_text(text[:cut], encoding="utf-8")
+        # 2문제 규칙 때문에 형식 검사에서 멈추고 DB는 그대로
+        from django.core.management.base import CommandError
+
+        with self.assertRaises(CommandError):
+            self.sync()
+        self.assertTrue(Question.objects.filter(pk=4).exists())
+
+    def test_extra_question_without_attempts_is_deleted_with_attempts_kept(self):
+        from .models import Question
+
+        lesson = Lesson.objects.get(pk=2)
+        q = Question.objects.create(lesson=lesson, order_no=3, qtype="flow", prompt="p", choices=["a", "b", "c", "d"],
+                                    answer=1, explanation="e")
+        self.assertIn("파일에 없어 지움", self.sync())
+        self.assertFalse(Question.objects.filter(pk=q.pk).exists())
+
+        q = Question.objects.create(lesson=lesson, order_no=3, qtype="flow", prompt="p", choices=["a", "b", "c", "d"],
+                                    answer=1, explanation="e")
+        progress = LessonProgress.objects.create(guest_key="g", lesson=lesson)
+        AnswerAttempt.objects.create(progress=progress, question=q, selected=1, is_correct=True)
+        self.assertIn("푼 기록이 있어 그대로 둠", self.sync())
+        self.assertTrue(Question.objects.filter(pk=q.pk).exists())
+
+    def test_invalid_file_changes_nothing(self):
+        from django.core.management.base import CommandError
+
+        self.edit("L01.toml", 'title = "반복문은', 'title = "바뀐 제목 반복문은')
+        self.edit("L02.toml", 'track = "error"', 'track = "errors"')
+        with self.assertRaises(CommandError):
+            self.sync()
+        self.assertTrue(Lesson.objects.get(pk=1).title.startswith("반복문은"))
+
+    def test_dry_run_saves_nothing(self):
+        self.edit("L01.toml", 'title = "반복문은', 'title = "바뀐 제목 반복문은')
+        self.assertIn("미리보기: 새로 0개, 바뀜 1개", self.sync("--dry-run"))
+        self.assertTrue(Lesson.objects.get(pk=1).title.startswith("반복문은"))
+
+    def test_chunks_step_runs_after_sync(self):
+        """ingest_chunks는 바뀐 레슨만 임베딩하므로 매번 불러도 된다. 지난번 실패분도 다음 시작 때 채워진다"""
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        with mock.patch("learning.management.commands.sync_lessons.call_command") as ingest:
+            call_command("sync_lessons", "--dir", str(self.root), stdout=StringIO())
+            call_command("sync_lessons", "--dir", str(self.root), "--dry-run", stdout=StringIO())
+            call_command("sync_lessons", "--dir", str(self.root), "--no-chunks", stdout=StringIO())
+        self.assertEqual(ingest.call_count, 1)
+        self.assertEqual(ingest.call_args.args[0], "ingest_chunks")
+
+    def test_chunk_failure_does_not_stop_server_start(self):
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        self.edit("L01.toml", 'title = "반복문은', 'title = "바뀐 제목 반복문은')
+        out = StringIO()
+        with mock.patch("learning.management.commands.sync_lessons.call_command", side_effect=RuntimeError("키 없음")):
+            call_command("sync_lessons", "--dir", str(self.root), stdout=out)
+        self.assertIn("청크 갱신 실패", out.getvalue())
+
+
+class LessonAdminReadOnlyTests(TestCase):
+    """레슨 내용은 파일이 원본이라 관리자 화면에서는 보기만 한다"""
+
+    fixtures = ["sample_lessons"]
+
+    def test_lesson_pages_open_read_only(self):
+        admin_user = get_user_model().objects.create_superuser("boss", "boss@example.com", "pw-unused-123")
+        self.client.force_login(admin_user)
+        base = f"/{settings.ADMIN_PATH}learning/lesson/"
+        listing = self.client.get(base)
+        self.assertEqual(listing.status_code, 200)
+        self.assertContains(listing, "lessons/ 폴더의 레슨 파일")
+        page = self.client.get(f"{base}1/change/")
+        self.assertEqual(page.status_code, 200)
+        self.assertNotContains(page, 'name="title"')  # 입력칸이 없다
+        self.assertEqual(self.client.get(f"{base}add/").status_code, 403)

@@ -1,9 +1,9 @@
-import unicodedata
-
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
 from pgvector.django import VectorField
+
+from .lesson_files import CODE_MAX_WIDTH, display_width, long_code_lines  # noqa: F401
 
 EMBEDDING_DIMENSIONS = 1536  # OpenAI text-embedding-3-small
 
@@ -51,19 +51,7 @@ class Lesson(models.Model):
         return f"{self.order_no}. {self.title}"
 
 
-# 문제 코드 한 줄의 최대 폭. 한글은 영문 2칸으로 센다.
-# 10/8 아이폰 확인에서 긴 줄이 잘려 정답을 가르는 조건이 안 보였다.
-# 폭 375px 화면은 글자를 11.5px까지 줄여도 약 45칸이 들어가서 44칸으로 정했다.
-CODE_MAX_WIDTH = 44
-
-
-def display_width(line):
-    return sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1 for ch in line)
-
-
-def long_code_lines(code, limit=CODE_MAX_WIDTH):
-    """폭을 넘는 줄 번호(1부터) 목록"""
-    return [i for i, line in enumerate(code.splitlines(), 1) if display_width(line) > limit]
+# 폭 규칙(44칸, 한글 2칸)은 레슨 파일 검사기와 같이 쓴다
 
 
 class Question(models.Model):
