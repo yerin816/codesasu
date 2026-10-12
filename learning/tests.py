@@ -777,6 +777,31 @@ class AdminSecurityTests(TestCase):
             call_command("grant_admin", "--from-env", stdout=StringIO())  # 비어 있어도 그대로 통과
 
 
+class EnsureRlsTests(TestCase):
+    fixtures = ["sample_lessons"]
+
+    def test_skips_quietly_on_sqlite_and_turns_rls_on_for_postgres(self):
+        from io import StringIO
+
+        from django.core.management import call_command
+        from django.db import connection
+
+        out = StringIO()
+        call_command("ensure_rls", stdout=out)
+        if connection.vendor != "postgresql":
+            self.assertIn("건너뜀", out.getvalue())
+            return
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT count(*) FROM pg_tables WHERE schemaname = 'public' AND NOT rowsecurity")
+            self.assertEqual(cursor.fetchone()[0], 0)
+        out = StringIO()
+        call_command("ensure_rls", stdout=out)  # 두 번째는 켤 표가 없다
+        self.assertIn("새로 켬 0개", out.getvalue())
+        # RLS를 켠 뒤에도 Django는 그대로 읽는다 (샌드박스 DB 계정은 슈퍼유저라 주인 여부와 상관없이 통과하므로,
+        # Supabase에서는 배포 후 실제 화면으로 다시 확인한다)
+        self.assertTrue(Lesson.objects.exists())
+
+
 class LoggingSettingsTests(SimpleTestCase):
     def test_server_errors_are_logged_to_console(self):
         self.assertIn("console", settings.LOGGING["loggers"]["django"]["handlers"])

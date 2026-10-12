@@ -18,7 +18,8 @@ RUN DJANGO_SECRET_KEY=build-only DATABASE_URL=postgres://build:build@localhost:5
     GOOGLE_CLIENT_ID=build GOOGLE_CLIENT_SECRET=build \
     python manage.py collectstatic --noinput
 
-# 서버가 켜질 때: DB 구조를 최신으로 맞추고(migrate), 환경변수 ADMIN_EMAILS의 구글 계정에 관리자 권한을 준 뒤
+# 서버가 켜질 때: DB 구조를 최신으로 맞추고(migrate), 모든 표에 RLS를 켜고(ensure_rls),
+# 환경변수 ADMIN_EMAILS의 구글 계정에 관리자 권한을 준 뒤
 # Cloud Run이 알려 주는 포트($PORT, 보통 8080)로 gunicorn을 띄운다.
 # migrate가 실패하면 새 버전이 뜨지 않고 Cloud Run은 이전 버전을 계속 쓴다. 서버는 최대 1대라 동시에 두 번 돌 일은 없다
-CMD python manage.py migrate --noinput && python manage.py grant_admin --from-env && exec gunicorn config.wsgi:application --bind 0.0.0.0:${PORT:-8080} --workers 2 --threads 4 --timeout 60 --access-logfile -
+CMD python manage.py migrate --noinput && python manage.py ensure_rls && python manage.py grant_admin --from-env && exec gunicorn config.wsgi:application --bind 0.0.0.0:${PORT:-8080} --workers 2 --threads 4 --timeout 60 --access-logfile -
