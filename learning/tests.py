@@ -1280,3 +1280,10 @@ class DiagnosticFileTests(SimpleTestCase):
     def test_diagnostic_numbers_do_not_break_lesson_numbering(self):
         report = self.check({"diag_A.toml": diag_text("A", 101), "diag_B.toml": diag_text("B", 102)})
         self.assertFalse(any("빈칸 없이" in e for e in report.errors), report.errors)
+
+
+class PhoneLinkTests(TestCase):
+    """코드의 전화번호 모양 글자가 아이폰에서 전화 링크로 바뀌지 않게 (10/13 L12 점검)"""
+
+    def test_format_detection_off(self):
+        self.assertContains(self.client.get("/"), 'name="format-detection" content="telephone=no')

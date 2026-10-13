@@ -6,6 +6,8 @@
   <title>{% block title %}코드사수{% endblock %}</title>
   <meta name="description" content="눈치 보며 묻던 코드, 이제 하루 10분이면 읽혀요">
   <meta name="theme-color" content="#1d6b5f">
+  <!-- 아이폰이 코드 속 '010-0000-0001' 같은 글자를 전화 링크로 바꾸지 않게 (10/13 폰 점검: L12 밑줄) -->
+  <meta name="format-detection" content="telephone=no, date=no, email=no, address=no">
   <link rel="manifest" href="{% url 'manifest' %}">
   <link rel="icon" type="image/png" href="{% static 'learning/icons/icon-192.png' %}">
   <link rel="apple-touch-icon" href="{% static 'learning/icons/apple-touch-icon.png' %}">

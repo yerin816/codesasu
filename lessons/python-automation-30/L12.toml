@@ -1,9 +1,9 @@
-# L12 초안 (10/13) - 폰 미리보기 점검 후 published = true로 바꾸면 공개
+# L12 (10/13 작성, 폰 미리보기 점검 후 공개)
 order_no = 12
 track = "shipping"
 title = "AI에게 다시 물을 때 넘길 것과 넘기면 안 되는 것"
 est_minutes = 8
-published = false
+published = true
 body = '''
 코드에서 에러가 나면 AI에게 다시 물어보는 게 가장 빨라요. 이때 무엇을 넘기느냐에 따라 답의 질과 회사 정보의 안전이 갈려요.
 
