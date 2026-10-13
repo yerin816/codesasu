@@ -1,0 +1,77 @@
+# L14 초안 (10/13) - 폰 미리보기 점검 후 published = true로 바꾸면 공개
+order_no = 14
+track = "shipping"
+title = "원본은 지키고, 실행 전에 미리 본다"
+est_minutes = 9
+published = false
+body = '''
+업무 자동화 코드는 파일을 저장하거나 지우는 일을 해요. 한 번 실행하면 되돌릴 수 없는 일이라, 실행하기 전에 두 가지를 확인해요.
+
+첫째, 원본을 덮어쓰지 않는지 봐요. `open(파일, "w")`의 "w"는 '새로 쓰기'라서, 원본과 같은 이름으로 열면 원본 내용이 지워지고 새 내용으로 바뀌어요. 정리한 결과는 `매출_정리.csv`처럼 새 이름으로 저장하세요.
+
+```
+with open("매출_정리.csv", "w") as f:
+```
+
+둘째, 지우거나 옮기는 코드는 먼저 '미리 보기'로 돌려요. AI에게 코드를 받을 때 `DRY_RUN = True`처럼 '실제로 하지 않고 무엇을 할지만 보여 주는' 스위치를 넣어 달라고 하면 돼요. 목록을 확인한 뒤에 False로 바꿔 실제로 실행해요.
+
+마지막으로, 처음 돌릴 때는 원본 폴더를 복사해 둔 사본에서 실행해 보면 가장 안전해요.
+'''
+
+[[questions]]
+qtype = "fix_line"
+prompt = "취소 주문을 뺀 정리본을 만들었는데, 원본 매출.csv를 다시 열어 보니 취소 행이 사라져 있어요. 원본을 지키려면 어떻게 고쳐야 할까요?"
+code = '''
+path = "매출.csv"
+with open(path) as f:
+    rows = f.read().splitlines()
+ok = [r for r in rows if "취소" not in r]
+with open(path, "w") as f:
+    f.write("\n".join(ok))
+with open(path) as f:
+    print(len(f.read().splitlines()))
+'''
+choices = [
+    "4번째 줄의 \"취소\"를 \"완료\"로 바꾼다",
+    "6번째 줄에서 join을 지운다",
+    "1번째 줄의 파일 이름을 영어로 바꾼다",
+    "5번째 줄의 저장 파일을 새 이름(매출_정리.csv)으로 바꾼다",
+]
+answer = 4
+explanation = "5번째 줄이 원본과 같은 이름을 \"w\"(새로 쓰기)로 열어서 원본이 정리본으로 바뀌어요. 새 이름으로 저장하면 원본 4행이 그대로 남아 마지막 줄이 4를 출력해요. ① 거르는 조건만 바뀌고 원본은 여전히 덮어써요. ② 목록을 그대로 쓰려다 TypeError가 나요. ③ 그런 이름의 파일이 없어 FileNotFoundError가 나요."
+
+[questions.check]
+line = 5
+fix = 'with open("매출_정리.csv", "w") as f:'
+expect = "4"
+files = [ { path = "매출.csv", text = "날짜,상태\n10-01,완료\n10-02,취소\n10-03,완료" } ]
+wrong = [
+    { choice = 1, line = 4, fix = 'ok = [r for r in rows if "완료" not in r]' },
+    { choice = 2, line = 6, fix = "    f.write(ok)" },
+    { choice = 3, line = 1, fix = 'path = "sales.csv"' },
+]
+
+[[questions]]
+qtype = "predict"
+prompt = "이름에 '최종'이 들어간 파일을 지우는 코드예요. 실행하면 무엇이 출력될까요?"
+code = '''
+import os
+
+files = ["10월.xlsx", "10월_최종.xlsx",
+         "10월_최종2.xlsx", "11월.xlsx"]
+DRY_RUN = True
+plan = [n for n in files if "최종" in n]
+if DRY_RUN:
+    print(f"지울 예정 {len(plan)}개")
+else:
+    for name in plan:
+        os.remove(name)
+'''
+choices = [
+    "지울 예정 4개",
+    "지울 예정 2개",
+    "아무것도 안 나오고 파일 2개가 지워진다",
+    "지울 예정 1개",
+]
+answer = 2
+explanation = "이름에 '최종'이 들어간 파일은 10월_최종, 10월_최종2 두 개예요. DRY_RUN이 True라서 지우지 않고 '지울 예정 2개'만 출력해요. 목록을 확인한 뒤 False로 바꾸면 그때 실제로 지워요. ① 전체 파일 수를 센 경우, ③ DRY_RUN을 놓친 경우, ④ '최종2'를 빠뜨린 경우예요."

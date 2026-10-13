@@ -1,0 +1,73 @@
+# L13 초안 (10/13) - 폰 미리보기 점검 후 published = true로 바꾸면 공개
+order_no = 13
+track = "shipping"
+title = "비밀번호와 키는 코드에 쓰지 않는다"
+est_minutes = 9
+published = false
+body = '''
+AI가 짜 준 코드에는 `API_KEY = "..."`처럼 비밀번호나 키가 그대로 적혀 있을 때가 많아요. 이대로 파일을 공유 폴더나 메신저로 보내면, 파일을 받은 사람 누구나 그 키로 회사 계정에 접근할 수 있어요.
+
+그래서 비밀 값은 코드 밖에 두고, 코드는 실행할 때 그 값을 읽어 오게 바꿔요. 컴퓨터에 따로 저장해 두는 값을 환경변수라고 해요. `os.environ.get("이름", 기본값)`은 환경변수를 읽고, 없으면 기본값을 돌려줘요.
+
+```
+key = os.environ.get("SALES_KEY")
+```
+
+`os.environ["이름"]`처럼 대괄호로 읽으면, 그 환경변수가 없을 때 KeyError가 나요. L02에서 본 '찾는 이름표가 없다'는 그 에러예요.
+
+비밀 값을 `.env`라는 파일에 모아 두는 방법도 많이 써요. 이때 `.env` 파일은 공유하거나 깃허브에 올리지 않아야 해요. 코드를 보내기 전에는 따옴표 안에 비밀번호·키처럼 보이는 값이 남아 있는지 한 번 훑어보세요.
+'''
+
+[[questions]]
+qtype = "fix_line"
+prompt = "매출 조회 코드를 팀 공유 폴더에 올리려 해요. 올리기 전에 꼭 고쳐야 하는 곳은 어디일까요?"
+code = '''
+import requests
+
+API_KEY = "my-secret-key-1234"
+url = "https://api.example.com/sales"
+headers = {"Authorization": API_KEY}
+res = requests.get(url, headers=headers)
+print(res.status_code)
+'''
+choices = [
+    "1번째 줄 import를 지운다",
+    "4번째 줄의 주소를 지운다",
+    "3번째 줄의 키를 코드에서 빼고 환경변수로 읽게 바꾼다",
+    "7번째 줄 print를 지운다",
+]
+answer = 3
+explanation = "3번째 줄에 키가 그대로 있어서, 파일을 받은 누구나 이 키를 쓸 수 있어요. API_KEY = os.environ.get(\"SALES_KEY\")처럼 바꾸고 실제 키는 각자 컴퓨터에만 두면 돼요. ① import는 비밀 값이 아니에요. ② 주소만으로는 접근할 수 없고 키가 있어야 해요. ④ 출력은 비밀 값을 담고 있지 않아요."
+check = { run = false, why = "공유 전 점검 문제라 실행 결과로 가를 수 없음" }
+
+[[questions]]
+qtype = "predict"
+prompt = "이 컴퓨터에는 SALES_KEY 환경변수가 설정돼 있지 않아요. 실행하면 무엇이 출력될까요?"
+code = '''
+import os
+
+key = os.environ.get("SALES_KEY", "없음")
+print("키:", key)
+'''
+choices = ["키: SALES_KEY", "에러가 난다", "키:", "키: 없음"]
+answer = 4
+explanation = "get은 환경변수가 없으면 두 번째 값(\"없음\")을 돌려줘요. 그래서 '키: 없음'이 나와요. ① 따옴표 안 이름은 찾을 이름표일 뿐 값이 아니에요. ② get은 없어도 에러를 내지 않아요. ③ 기본값을 정해 두지 않았다면 None이 나와요."
+
+[[questions]]
+qtype = "error"
+prompt = "같은 컴퓨터에서 이번엔 3번째 줄에서 KeyError: 'SALES_KEY' 에러가 났어요. 원인은 무엇일까요?"
+code = '''
+import os
+
+key = os.environ["SALES_KEY"]
+print("키 길이:", len(key))
+'''
+choices = [
+    "os를 import하지 않았다",
+    "SALES_KEY 환경변수가 이 컴퓨터에 설정돼 있지 않다",
+    "키가 너무 길어서 읽지 못했다",
+    "print 안에서는 len을 쓸 수 없다",
+]
+answer = 2
+explanation = "대괄호로 읽으면 그 이름의 환경변수가 없을 때 KeyError가 나요. 실행할 컴퓨터에 SALES_KEY를 설정하거나, 없을 때를 대비해 get으로 읽어야 해요. ① 1번째 줄에서 import했어요. ③ 키를 읽기도 전에 에러가 났어요. ④ 에러는 4번째 줄이 아니라 3번째 줄에서 났어요."
+check = { error = "KeyError" }
