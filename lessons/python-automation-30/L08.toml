@@ -1,0 +1,62 @@
+# L08 초안 (10/13) - 폰 미리보기 점검 후 published = true로 바꾸면 공개
+order_no = 8
+track = "error"
+title = "에러 없이 틀린 결과가 제일 위험하다"
+est_minutes = 8
+published = false
+body = '''
+에러가 나면 적어도 '뭔가 잘못됐다'는 건 알 수 있어요. 더 위험한 건 에러 없이 틀린 숫자가 나와서 그대로 보고서에 들어가는 경우예요.
+
+AI가 짠 합계 코드에서 자주 보이는 원인은 들여쓰기 위치예요. `for` 아래 들여쓴 줄은 행마다 반복되고, 들여쓰기가 끝난 줄은 반복이 다 끝난 뒤 한 번만 실행돼요.
+
+`total = 0`이 반복문 안에 들어가면 행마다 0으로 되돌아가서 마지막 값만 남아요. 반대로 `print`가 반복문 안에 들어가면 중간 합계가 행마다 찍혀요.
+
+그래서 결과가 나오면 한 번은 손으로 계산한 값과 비교해 보세요. 데이터 2~3행으로 먼저 돌려 보면 계산이 쉬워서 틀린 걸 빨리 알아챌 수 있어요.
+'''
+
+[[questions]]
+qtype = "predict"
+prompt = "주문 금액 합계를 내는 코드예요. 실행하면 무엇이 출력될까요?"
+code = '''
+orders = [30, 50, 20]
+for o in orders:
+    total = 0
+    total += o
+print(total)
+'''
+choices = ["100", "0", "30", "20"]
+answer = 4
+explanation = "3번째 줄 total = 0이 반복문 안에 있어서 행마다 0으로 되돌아가요. 마지막 행에서 0 + 20이 되어 20이 나와요. 에러가 없어서 틀린 줄 모르기 쉬워요. ①은 합계가 제대로 쌓인다고 본 경우, ②는 0으로 되돌린 뒤 더하는 줄을 놓친 경우, ③은 첫 행에서 멈춘다고 본 경우예요."
+
+[[questions]]
+qtype = "fix_line"
+prompt = "보고서에 '주문 합계' 한 줄만 넣으려는데 세 줄이 찍혀요. 어떻게 고쳐야 할까요?"
+code = '''
+orders = [30, 50, 20]
+total = 0
+for o in orders:
+    total += o
+    print("주문 합계:", total)
+'''
+choices = [
+    "2번째 줄 total = 0을 반복문 안으로 옮긴다",
+    "5번째 줄의 들여쓰기를 없애 반복문 밖으로 뺀다",
+    "4번째 줄을 total = o로 바꾼다",
+    "5번째 줄을 print(total)로 바꾼다",
+]
+answer = 2
+explanation = "print가 들여쓰기 때문에 반복문 안에 있어서 행마다 30, 80, 100이 찍혀요. 들여쓰기를 없애면 반복이 끝난 뒤 '주문 합계: 100' 한 줄만 나와요. ① 행마다 0으로 되돌아가 30, 50, 20이 찍혀요. ③ 더하지 않고 덮어써서 30, 50, 20이 찍혀요. ④ 문구만 빠지고 세 줄은 그대로예요."
+
+[questions.check]
+line = 5
+fix = 'print("주문 합계:", total)'
+expect = "주문 합계: 100"
+wrong = [
+    { choice = 1, line = [2, 4], fix = '''
+for o in orders:
+    total = 0
+    total += o
+''' },
+    { choice = 3, line = 4, fix = "    total = o" },
+    { choice = 4, line = 5, fix = "    print(total)" },
+]

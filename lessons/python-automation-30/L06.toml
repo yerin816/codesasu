@@ -1,0 +1,67 @@
+# L06 초안 (10/13) - 폰 미리보기 점검 후 published = true로 바꾸면 공개
+order_no = 6
+track = "reading"
+title = "함수는 return한 것만 돌려준다"
+est_minutes = 9
+published = false
+body = '''
+`def`는 여러 번 쓰는 계산에 이름을 붙여 묶어 두는 줄이에요. `def add_vat(price):`는 add_vat라는 함수를 만들고, 괄호 안 price는 함수를 부를 때 넣는 값이에요.
+
+함수 안의 줄은 만들 때가 아니라 `add_vat(1000)`처럼 불렀을 때 실행돼요. 부를 때 넣은 1000이 price가 돼요.
+
+`return`은 계산한 값을 함수 밖으로 돌려주는 줄이에요. 그래서 `a = add_vat(1000)`이라고 쓰면 돌려받은 값이 a에 담겨요.
+
+return 없이 print만 있으면 화면에 보이기만 하고 돌려주는 값은 없어요. 이때 함수의 결과는 None('값 없음')이에요. 화면에 숫자가 찍혀도 변수에는 None이 담기고, 이걸로 계산하면 에러가 나요.
+'''
+
+[[questions]]
+qtype = "predict"
+prompt = "부가세(10%)를 붙이는 함수예요. 실행하면 무엇이 출력될까요?"
+code = '''
+def add_vat(price):
+    return int(price * 1.1)
+
+a = add_vat(1000)
+b = add_vat(2000)
+print(a + b)
+'''
+choices = ["3000", "1100", "3300", "2200"]
+answer = 3
+explanation = "add_vat는 받은 금액에 1.1을 곱해 돌려줘요. 1000은 1100, 2000은 2200이 되어 a + b는 3300이에요. ①은 부가세를 붙이기 전 금액을 더한 경우, ②는 a만, ④는 b만 본 경우예요."
+
+[[questions]]
+qtype = "fix_line"
+prompt = "화면에 1100과 2200은 찍히는데, 마지막 줄에서 TypeError가 났어요. 합계가 나오게 하려면 어떻게 고쳐야 할까요?"
+code = '''
+def add_vat(price):
+    total = int(price * 1.1)
+    print(total)
+
+a = add_vat(1000)
+b = add_vat(2000)
+print("합계:", a + b)
+'''
+choices = [
+    "3번째 줄의 print(total)을 return total로 바꾼다",
+    "7번째 줄의 a + b를 a, b로 바꾼다",
+    "2번째 줄에서 int( )를 지운다",
+    "5~6번째 줄을 함수(1~3번째 줄)보다 위로 옮긴다",
+]
+answer = 1
+explanation = "add_vat에 return이 없어서 함수의 결과는 None('값 없음')이에요. 화면에 1100, 2200이 찍혀도 a와 b에는 None이 담겨 None + None에서 에러가 나요. print를 return으로 바꾸면 '합계: 3300'이 나와요. ② 에러는 사라지지만 '합계: None None'이 나와요. ③ int를 지워도 돌려주는 값이 없는 건 같아요. ④ 함수를 만들기 전에 불러서 NameError가 나요."
+
+[questions.check]
+line = 3
+fix = "    return total"
+expect = "합계: 3300"
+wrong = [
+    { choice = 2, line = 7, fix = 'print("합계:", a, b)' },
+    { choice = 3, line = 2, fix = "    total = price * 1.1" },
+    { choice = 4, line = [1, 6], fix = '''
+a = add_vat(1000)
+b = add_vat(2000)
+def add_vat(price):
+    total = int(price * 1.1)
+    print(total)
+''' },
+]
