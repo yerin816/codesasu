@@ -160,6 +160,7 @@ async function initLesson() {
   intro.innerHTML = `${preview}<p class="tag">${esc(TRACK[l.track] || "")} · 약 ${esc(l.est_minutes)}분</p>
     <h1>${esc(l.title)}</h1>
     <div class="body">${markdown(l.body_md)}</div>`;
+  fitSnippets();
   setActions([{ label: `문제 풀기 (${l.questions.length}문제)`, onClick: startQuiz }]);
 }
 
@@ -251,6 +252,22 @@ function fitCode() {
   wrap.classList.toggle("is-overflow", overflow);
   wrap.classList.remove("at-end");
   hint.hidden = !overflow;
+}
+
+/* 본문 속 코드 상자도 폰 폭에 맞게 글자를 줄인다 (10/13 폰 점검: 에러 문구 한 줄이 360~390px에서 넘침) */
+const SNIPPET_PX = 13;
+const SNIPPET_MIN_PX = 11;
+function fitSnippets() {
+  document.querySelectorAll("pre.snippet").forEach((pre) => {
+    pre.style.fontSize = "";
+    const style = getComputedStyle(pre);
+    const pad = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+    const box = pre.clientWidth - pad;
+    const full = pre.scrollWidth - pad;
+    if (full > box) {
+      pre.style.fontSize = `${Math.max(SNIPPET_MIN_PX, Math.floor((SNIPPET_PX * box / full) * 10) / 10)}px`;
+    }
+  });
 }
 
 function markCodeScrollEnd() {
@@ -475,7 +492,8 @@ document.addEventListener("DOMContentLoaded", () => {
     $("#sasu-close").addEventListener("click", closeSasu);
     $("#q-code").addEventListener("scroll", markCodeScrollEnd, { passive: true });
     window.addEventListener("resize", fitCode);
-    if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitCode);
+    window.addEventListener("resize", fitSnippets);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { fitCode(); fitSnippets(); });
   }
 
   if ("serviceWorker" in navigator) {

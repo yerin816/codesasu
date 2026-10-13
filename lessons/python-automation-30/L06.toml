@@ -1,9 +1,9 @@
-# L06 초안 (10/13) - 폰 미리보기 점검 후 published = true로 바꾸면 공개
+# L06 (10/13 작성, 폰 미리보기 점검 후 공개)
 order_no = 6
 track = "reading"
 title = "함수는 return한 것만 돌려준다"
 est_minutes = 9
-published = false
+published = true
 body = '''
 `def`는 여러 번 쓰는 계산에 이름을 붙여 묶어 두는 줄이에요. `def add_vat(price):`는 add_vat라는 함수를 만들고, 괄호 안 price는 함수를 부를 때 넣는 값이에요.
 

@@ -1,17 +1,25 @@
-# L07 초안 (10/13) - 폰 미리보기 점검 후 published = true로 바꾸면 공개
+# L07 (10/13 작성, 폰 미리보기 점검 후 공개)
 order_no = 7
 track = "error"
 title = "에러 메시지는 맨 아랫줄부터 읽는다"
 est_minutes = 9
-published = false
+published = true
 body = '''
 에러가 나면 Traceback으로 시작하는 여러 줄이 나와요. 길어 보여도 읽을 곳은 두 군데예요. 맨 아랫줄은 '무슨 에러인지', 그 바로 위 `line 숫자`는 '몇 번째 줄에서 났는지'예요.
 
 맨 아랫줄은 `에러 종류: 원인` 모양이에요. 에러 종류만 알아도 어디를 볼지 좁혀져요.
 
-TypeError는 종류가 다른 값끼리 계산하거나 이어 붙일 때 나요. 예를 들어 글자("명")에 숫자(12)를 + 로 이어 붙이면 `can only concatenate str (not "int") to str`, 즉 '글자에는 글자만 이어 붙일 수 있다'는 에러가 나요. 숫자를 str( )로 감싸 글자로 바꾸면 돼요.
+TypeError는 종류가 다른 값끼리 계산하거나 이어 붙일 때 나요. 예를 들어 글자("명")에 숫자(12)를 + 로 이어 붙이면 TypeError와 함께 아래 문구가 나와요. '글자에는 글자만 이어 붙일 수 있다'는 뜻이라, 숫자를 str( )로 감싸 글자로 바꾸면 돼요.
 
-IndexError는 목록에 없는 순번을 찾을 때 나요. 파이썬 목록의 순번은 0부터 시작해서, 값이 3개인 목록의 순번은 0, 1, 2예요. 3번을 찾으면 `list index out of range`, 즉 '목록 범위를 벗어났다'는 에러가 나요.
+```
+can only concatenate str (not "int") to str
+```
+
+IndexError는 목록에 없는 순번을 찾을 때 나요. 파이썬 목록의 순번은 0부터 시작해서, 값이 3개인 목록의 순번은 0, 1, 2예요. 3번을 찾으면 '목록 범위를 벗어났다'는 아래 에러가 나요.
+
+```
+IndexError: list index out of range
+```
 '''
 
 [[questions]]
