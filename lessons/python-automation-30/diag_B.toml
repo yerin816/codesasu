@@ -1,0 +1,158 @@
+# 사전·사후 진단 B (10/13 초안). B와 문항별 유형·개념이 같은 평행 검사지
+# 사람마다 사전/사후에 A·B를 바꿔 풀게 한다 (FR-15). 레슨 화면이 아닌 진단 화면에서 쓴다
+kind = "diagnostic"
+order_no = 102
+track = "reading"
+title = "코드 읽기 진단 B"
+est_minutes = 10
+published = false
+body = "코드를 실행하지 않고 읽기만 해서 답을 골라 주세요. 모르는 문제는 짐작하지 말고 가장 그럴듯한 것을 골라도 돼요. 결과는 점수로만 쓰이고, 다음 레슨을 여는 데는 영향이 없어요."
+
+[[questions]]
+qtype = "predict"
+prompt = "30세 미만인 사람 수를 세는 코드예요. 무엇이 출력될까요?"
+code = '''
+ages = [25, 31, 40, 29]
+count = 0
+for a in ages:
+    if a < 30:
+        count += 1
+print(count)
+'''
+choices = ["4", "1", "2", "3"]
+answer = 3
+explanation = "30 미만은 25와 29, 두 개라 2예요. 반복문은 한 행씩 꺼내 조건을 확인해요. (관련 레슨: L01)"
+
+[[questions]]
+qtype = "predict"
+prompt = "지연 일수로 표시를 정하는 코드예요. 무엇이 출력될까요?"
+code = '''
+days = 12
+if days > 3:
+    tag = "주의"
+elif days > 10:
+    tag = "경고"
+else:
+    tag = "정상"
+print(tag)
+'''
+choices = ["주의", "경고", "정상", "주의 경고"]
+answer = 1
+explanation = "조건은 위에서부터 확인하고 처음 맞는 곳에서 멈춰요. 12는 첫 조건 days > 3에서 참이라 '주의'예요. (관련 레슨: L03)"
+
+[[questions]]
+qtype = "predict"
+prompt = "두 점수를 더하려는 코드예요. 무엇이 출력될까요?"
+code = '''
+x = "70"
+y = "30"
+print(x + y)
+'''
+choices = ["100", "70 30", "7030", "에러가 난다"]
+answer = 3
+explanation = "따옴표 안의 값은 글자라서 + 는 이어 붙이기예요. 그래서 7030이 나와요. (관련 레슨: L04)"
+
+[[questions]]
+qtype = "predict"
+prompt = "점포별 판매량을 합치는 코드예요. 무엇이 출력될까요?"
+code = '''
+rows = [
+    {"점포": "강남", "판매": 6},
+    {"점포": "홍대", "판매": 1},
+    {"점포": "강남", "판매": 4},
+]
+cnt = {}
+for r in rows:
+    k = r["점포"]
+    cnt[k] = cnt.get(k, 0) + r["판매"]
+print(cnt["강남"])
+'''
+choices = ["4", "6", "11", "10"]
+answer = 4
+explanation = "강남 칸에 6, 다시 4가 쌓여 10이에요. get(k, 0)은 칸이 없으면 0부터 시작해요. (관련 레슨: L05)"
+
+[[questions]]
+qtype = "predict"
+prompt = "수수료를 더하는 함수예요. 무엇이 출력될까요?"
+code = '''
+def add_fee(price):
+    total = price + 500
+
+x = add_fee(3000)
+print(x)
+'''
+choices = ["3500", "None", "3000", "에러가 난다"]
+answer = 2
+explanation = "함수에 return이 없어서 돌려주는 값이 없어요. 그래서 x에는 None('값 없음')이 담겨요. (관련 레슨: L06)"
+
+[[questions]]
+qtype = "error"
+prompt = "2번째 줄에서 TypeError: unsupported operand type(s) for +: 'int' and 'str' 에러가 났어요. 원인은 무엇일까요?"
+code = '''
+n = 7
+label = n + "번째 주문"
+print(label)
+'''
+choices = ["숫자에 글자를 그대로 더하려 했다", "n이라는 이름표가 없다", "label은 쓸 수 없는 이름이다", "한글은 + 로 쓸 수 없다"]
+answer = 1
+explanation = "n은 숫자라 글자와 + 로 더할 수 없어요. str(n)으로 바꾸면 돼요. (관련 레슨: L07)"
+check = { error = "TypeError" }
+
+[[questions]]
+qtype = "error"
+prompt = "IndexError: list index out of range 에러가 났어요. 원인은 무엇일까요?"
+code = '''
+items = ["펜", "노트"]
+last = items[2]
+print(last)
+'''
+choices = ["노트는 두 글자라서", "순번은 0부터라 2번은 없다", "last는 쓸 수 없는 이름이다", "print를 먼저 써야 한다"]
+answer = 2
+explanation = "값이 2개인 목록의 순번은 0, 1이에요. 2번은 없어서 에러가 나요. (관련 레슨: L07)"
+check = { error = "IndexError" }
+
+[[questions]]
+qtype = "predict"
+prompt = "주간 근무 시간 합계를 내려는 코드예요. 무엇이 출력될까요?"
+code = '''
+hours = [8, 6, 7]
+for h in hours:
+    week = 0
+    week = week + h
+print(week)
+'''
+choices = ["21", "8", "0", "7"]
+answer = 4
+explanation = "week = 0이 반복문 안에 있어서 행마다 0으로 돌아가요. 마지막 7만 남아요. 에러 없이 틀린 결과예요. (관련 레슨: L08)"
+
+[[questions]]
+qtype = "error"
+prompt = "4번째 줄에서 ValueError: time data '13-10-2026' does not match format '%Y-%m-%d' 에러가 났어요. 원인은 무엇일까요?"
+code = '''
+from datetime import datetime
+
+text = "13-10-2026"
+d = datetime.strptime(text, "%Y-%m-%d")
+print(d.year)
+'''
+choices = ["2026년은 읽을 수 없는 연도다", "글자는 일-월-연 순서인데 모양은 연-월-일로 정했다", "print(d.year)에 오타가 있다", "datetime은 맨 위에 쓸 수 없다"]
+answer = 2
+explanation = "글자와 정한 모양이 다르면 읽지 못해요. 순서를 맞추거나 모양을 '%d-%m-%Y'로 바꿔야 해요. (관련 레슨: L09)"
+check = { error = "ValueError" }
+
+[[questions]]
+qtype = "fix_line"
+prompt = "이 코드를 팀 공유 폴더에 올리기 전에 꼭 고쳐야 하는 곳은 어디일까요?"
+code = '''
+import pymysql
+
+conn = pymysql.connect(
+    host="db.example.com",
+    user="report",
+    password="Qwer1234",
+)
+'''
+choices = ["1번째 줄 import를 지운다", "3번째 줄 conn 이름을 바꾼다", "6번째 줄 비밀번호를 코드에서 빼고 따로 보관한다", "7번째 줄 괄호를 지운다"]
+answer = 3
+explanation = "비밀번호가 코드에 그대로 있으면 파일을 받은 누구나 볼 수 있어요. .env 같은 별도 파일로 빼고 공유하지 않아야 해요. (관련 레슨: L13)"
+check = { run = false, why = "공유 전 점검 문제라 실행 결과로 가를 수 없음" }

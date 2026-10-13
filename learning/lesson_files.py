@@ -37,6 +37,8 @@ KINDS = {"lesson", "diagnostic"}
 # 10/8 아이폰 확인에서 긴 줄이 잘려 정답을 가르는 조건이 안 보였다.
 # 폭 375px 화면은 글자를 11.5px까지 줄여도 약 45칸이 들어가서 44칸으로 정했다.
 CODE_MAX_WIDTH = 44
+DIAGNOSTIC_SIZE = 10  # 사전·사후 진단 문제 수 (기획서 FR-03)
+DIAGNOSTIC_ORDER = {"A": 101, "B": 102}  # 레슨 번호(1~)와 겹치지 않게
 CODE_MAX_LINES = 16  # 넘으면 경고: 폰 한 화면에 코드와 선택지가 같이 안 보인다
 RUN_TIMEOUT_SEC = 20
 SYNTAX_ERRORS = {"SyntaxError", "IndentationError", "TabError"}
@@ -384,6 +386,38 @@ def _check_question(where, q, report, run):
             report.warnings.append(f"{where}: 정답 선택지에 고칠 줄 번호({check['line']})가 안 보임")
 
 
+def _check_diagnostics(course, report):
+    """사전·사후 진단(FR-03·FR-15): diag_A.toml·diag_B.toml 두 세트.
+    사람마다 사전/사후에 A·B를 바꿔 풀게 하므로(같은 문제를 두 번 풀어 점수가 오르는 효과 방지)
+    두 세트는 문제 수와 문항별 유형 순서가 같아야 한다(평행 검사지)."""
+    diags = {}
+    for lesson in course.lessons:
+        if lesson.kind != "diagnostic":
+            continue
+        where = f"{course.slug}/{lesson.path.name}"
+        m = re.fullmatch(r"diag_([AB])\.toml", lesson.path.name)
+        if not m:
+            report.errors.append(f"{where}: 진단 파일 이름은 diag_A.toml 또는 diag_B.toml")
+            continue
+        expected = DIAGNOSTIC_ORDER[m.group(1)]
+        if lesson.order_no != expected:
+            report.errors.append(f"{where}: 진단 {m.group(1)}의 order_no는 {expected}")
+        diags[m.group(1)] = lesson
+    if len(diags) == 1:
+        report.errors.append(f"{course.slug}: 진단은 A·B 두 세트가 같이 있어야 함")
+    for letter, lesson in diags.items():
+        answers = [q.answer for q in lesson.questions if isinstance(q.answer, int)]
+        for n in range(1, 5):
+            if answers and answers.count(n) / len(answers) > 0.4:
+                report.warnings.append(f"{course.slug}: 진단 {letter}의 정답이 {n}번에 {answers.count(n)}/{len(answers)} 몰림")
+    if len(diags) == 2:
+        a = [q.qtype for q in diags["A"].questions]
+        b = [q.qtype for q in diags["B"].questions]
+        if a != b:
+            diff = [i + 1 for i, (x, y) in enumerate(zip(a, b)) if x != y] or ["문제 수"]
+            report.errors.append(f"{course.slug}: 진단 A·B의 문항 유형 순서가 다름 (문제 {diff})")
+
+
 def check_course(course, run=True, strict=False):
     report = Report()
     report.lines.append(f"{course.slug} - {course.title} (레슨 {len(course.lessons)}개)")
@@ -392,9 +426,10 @@ def check_course(course, run=True, strict=False):
     if not course.title:
         report.errors.append(f"{course.slug}/course.toml: title이 비어 있음")
 
-    numbers = [l.order_no for l in course.lessons]
+    numbers = [l.order_no for l in course.lessons if l.kind == "lesson"]
     if numbers != list(range(1, len(numbers) + 1)):
         report.errors.append(f"{course.slug}: 레슨 번호가 1부터 빈칸 없이 이어지지 않음 {numbers}")
+    _check_diagnostics(course, report)
 
     answers = []
     for lesson in course.lessons:
@@ -425,12 +460,15 @@ def check_course(course, run=True, strict=False):
         if not isinstance(lesson.is_published, bool):
             report.errors.append(f"{where}: published는 true 또는 false")
         count = len(lesson.questions)
+        if lesson.kind == "diagnostic" and count != DIAGNOSTIC_SIZE:
+            report.errors.append(f"{where}: 진단은 {DIAGNOSTIC_SIZE}문제여야 함 (지금 {count}개)")
         if lesson.kind == "lesson" and not 2 <= count <= 3:
             report.errors.append(f"{where}: 문제는 2~3개여야 함 (지금 {count}개)")
 
         state = "공개" if lesson.is_published else "초안"
-        report.lines.append(f"  L{lesson.order_no:02d} [{TRACKS.get(lesson.track, '?')}·{state}] {lesson.title}"
-                            if isinstance(lesson.order_no, int) else f"  {lesson.path.name}")
+        label = (lesson.path.stem.replace("diag_", "진단 ") if lesson.kind == "diagnostic"
+                 else f"L{lesson.order_no:02d}" if isinstance(lesson.order_no, int) else lesson.path.name)
+        report.lines.append(f"  {label} [{TRACKS.get(lesson.track, '?')}·{state}] {lesson.title}")
         for q in lesson.questions:
             _check_question(f"{where} 문제{q.order_no}", q, report, run)
             if isinstance(q.answer, int):

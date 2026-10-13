@@ -1,0 +1,155 @@
+# 사전·사후 진단 A (10/13 초안). B와 문항별 유형·개념이 같은 평행 검사지
+# 사람마다 사전/사후에 A·B를 바꿔 풀게 한다 (FR-15). 레슨 화면이 아닌 진단 화면에서 쓴다
+kind = "diagnostic"
+order_no = 101
+track = "reading"
+title = "코드 읽기 진단 A"
+est_minutes = 10
+published = false
+body = "코드를 실행하지 않고 읽기만 해서 답을 골라 주세요. 모르는 문제는 짐작하지 말고 가장 그럴듯한 것을 골라도 돼요. 결과는 점수로만 쓰이고, 다음 레슨을 여는 데는 영향이 없어요."
+
+[[questions]]
+qtype = "predict"
+prompt = "80점 이상인 사람 수를 세는 코드예요. 무엇이 출력될까요?"
+code = '''
+scores = [72, 88, 95, 60]
+passed = 0
+for s in scores:
+    if s >= 80:
+        passed += 1
+print(passed)
+'''
+choices = ["1", "3", "4", "2"]
+answer = 4
+explanation = "80 이상은 88과 95, 두 개라 2예요. 반복문은 한 행씩 꺼내 조건을 확인해요. (관련 레슨: L01)"
+
+[[questions]]
+qtype = "predict"
+prompt = "매출로 등급을 매기는 코드예요. 무엇이 출력될까요?"
+code = '''
+sales = 120
+if sales >= 50:
+    level = "보통"
+elif sales >= 100:
+    level = "우수"
+else:
+    level = "미달"
+print(level)
+'''
+choices = ["우수", "보통", "미달", "보통 우수"]
+answer = 2
+explanation = "조건은 위에서부터 확인하고 처음 맞는 곳에서 멈춰요. 120은 첫 조건 sales >= 50에서 참이라 '보통'이에요. (관련 레슨: L03)"
+
+[[questions]]
+qtype = "predict"
+prompt = "두 수량을 더하려는 코드예요. 무엇이 출력될까요?"
+code = '''
+q1 = "150"
+q2 = "50"
+print(q1 + q2)
+'''
+choices = ["15050", "200", "150 50", "에러가 난다"]
+answer = 1
+explanation = "따옴표 안의 값은 글자라서 + 는 이어 붙이기예요. 그래서 15050이 나와요. (관련 레슨: L04)"
+
+[[questions]]
+qtype = "predict"
+prompt = "팀별 건수를 합치는 코드예요. 무엇이 출력될까요?"
+code = '''
+rows = [
+    {"팀": "A", "건수": 3},
+    {"팀": "B", "건수": 4},
+    {"팀": "A", "건수": 2},
+]
+cnt = {}
+for r in rows:
+    t = r["팀"]
+    cnt[t] = cnt.get(t, 0) + r["건수"]
+print(cnt["A"])
+'''
+choices = ["2", "3", "5", "9"]
+answer = 3
+explanation = "A 칸에 3, 다시 2가 쌓여 5예요. get(t, 0)은 칸이 없으면 0부터 시작해요. (관련 레슨: L05)"
+
+[[questions]]
+qtype = "predict"
+prompt = "숫자를 두 배로 만드는 함수예요. 무엇이 출력될까요?"
+code = '''
+def double(n):
+    result = n * 2
+
+r = double(4)
+print(r)
+'''
+choices = ["8", "4", "None", "에러가 난다"]
+answer = 3
+explanation = "함수에 return이 없어서 돌려주는 값이 없어요. 그래서 r에는 None('값 없음')이 담겨요. (관련 레슨: L06)"
+
+[[questions]]
+qtype = "error"
+prompt = "2번째 줄에서 TypeError: can only concatenate str (not \"int\") to str 에러가 났어요. 원인은 무엇일까요?"
+code = '''
+total = 25000
+print("합계: " + total + "원")
+'''
+choices = ["total이라는 이름표가 없다", "글자에 숫자를 그대로 이어 붙이려 했다", "'원' 글자는 쓸 수 없다", "print 안에서는 + 를 쓸 수 없다"]
+answer = 2
+explanation = "total은 숫자라 글자와 + 로 이어 붙일 수 없어요. str(total)로 바꾸면 돼요. (관련 레슨: L07)"
+check = { error = "TypeError" }
+
+[[questions]]
+qtype = "error"
+prompt = "IndexError: list index out of range 에러가 났어요. 원인은 무엇일까요?"
+code = '''
+names = ["김", "이", "박"]
+print(names[3])
+'''
+choices = ["목록 순번은 0부터라 3번은 없다", "한글은 목록에 넣을 수 없다", "names라는 이름표가 없다", "print 안에 [ ]를 쓸 수 없다"]
+answer = 1
+explanation = "값이 3개인 목록의 순번은 0, 1, 2예요. 3번은 없어서 에러가 나요. (관련 레슨: L07)"
+check = { error = "IndexError" }
+
+[[questions]]
+qtype = "predict"
+prompt = "급여 합계를 내려는 코드예요. 무엇이 출력될까요?"
+code = '''
+pays = [100, 200, 300]
+for p in pays:
+    s = 0
+    s += p
+print(s)
+'''
+choices = ["600", "100", "300", "0"]
+answer = 3
+explanation = "s = 0이 반복문 안에 있어서 행마다 0으로 돌아가요. 마지막 300만 남아요. 에러 없이 틀린 결과예요. (관련 레슨: L08)"
+
+[[questions]]
+qtype = "error"
+prompt = "4번째 줄에서 ValueError: time data '2026/10/13' does not match format '%Y-%m-%d' 에러가 났어요. 원인은 무엇일까요?"
+code = '''
+from datetime import datetime
+
+text = "2026/10/13"
+d = datetime.strptime(text, "%Y-%m-%d")
+print(d.day)
+'''
+choices = ["13일은 읽을 수 없는 날짜다", "글자는 / 로 나뉘는데 모양은 - 로 정했다", "print(d.day)에 오타가 있다", "datetime은 맨 위에 쓸 수 없다"]
+answer = 2
+explanation = "글자와 정한 모양이 한 글자라도 다르면 읽지 못해요. 구분 기호를 맞춰야 해요. (관련 레슨: L09)"
+check = { error = "ValueError" }
+
+[[questions]]
+qtype = "fix_line"
+prompt = "이 코드를 팀 공유 폴더에 올리기 전에 꼭 고쳐야 하는 곳은 어디일까요?"
+code = '''
+import smtplib
+
+ID = "sales@example.com"
+PW = "pass1234!"
+server = smtplib.SMTP("smtp.example.com")
+server.login(ID, PW)
+'''
+choices = ["1번째 줄 import를 지운다", "5번째 줄 주소를 바꾼다", "6번째 줄을 맨 위로 올린다", "4번째 줄 비밀번호를 코드에서 빼고 따로 보관한다"]
+answer = 4
+explanation = "비밀번호가 코드에 그대로 있으면 파일을 받은 누구나 볼 수 있어요. .env 같은 별도 파일로 빼고 공유하지 않아야 해요. (관련 레슨: L13)"
+check = { run = false, why = "공유 전 점검 문제라 실행 결과로 가를 수 없음" }

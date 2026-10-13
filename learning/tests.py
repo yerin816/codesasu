@@ -1000,7 +1000,7 @@ class SyncLessonsTests(TestCase):
         shutil.copytree(LESSONS_DIR / "python-automation-30", self.root / "python-automation-30")
         self.course_dir = self.root / "python-automation-30"
         # 저장소의 초안 레슨(L03~)은 빼고 fixture와 같은 L01·L02만 남긴다
-        for p in self.course_dir.glob("L*.toml"):
+        for p in list(self.course_dir.glob("L*.toml")) + list(self.course_dir.glob("diag_*.toml")):
             if p.name not in ("L01.toml", "L02.toml"):
                 p.unlink()
 
@@ -1211,3 +1211,72 @@ class DraftPreviewTests(ApiTestCase):
         page = c.get(f"/{settings.ADMIN_PATH}learning/lesson/")
         self.assertContains(page, f'href="/lessons/{self.draft.id}/"')
         self.assertContains(page, "미리보기")
+
+
+def diag_text(letter, order, qtypes=None, answers=None):
+    """테스트용 진단 파일: 기본은 결과 예측 10문제"""
+    qtypes = qtypes or ["predict"] * 10
+    answers = answers or [1, 2, 3, 4, 1, 2, 3, 4, 1, 2]
+    parts = [f'kind = "diagnostic"\norder_no = {order}\ntrack = "reading"\ntitle = "진단 {letter}"\n'
+             f'est_minutes = 10\npublished = false\nbody = "읽고 고르세요."\n']
+    for i, (qt, ans) in enumerate(zip(qtypes, answers)):
+        choices = ["a", "b", "c", "d"]
+        choices[ans - 1] = str(i)
+        extra = 'check = { run = false, why = "테스트" }\n' if qt == "flow" else ""
+        parts.append(f'\n[[questions]]\nqtype = "{qt}"\nprompt = "무엇이 나올까요?"\ncode = "print({i})"\n'
+                     f'choices = {json.dumps(choices)}\nanswer = {ans}\nexplanation = "{i}이 나와요."\n{extra}')
+    return "".join(parts)
+
+
+class DiagnosticFileTests(SimpleTestCase):
+    """사전·사후 진단 A·B는 같은 모양의 평행 검사지여야 한다 (FR-03·FR-15)"""
+
+    def check(self, files, run=False):
+        import tempfile
+        from pathlib import Path
+
+        from .lesson_files import check_all
+
+        root = Path(tempfile.mkdtemp())
+        course = root / "t"
+        course.mkdir()
+        (course / "course.toml").write_text('slug = "t"\ntitle = "테스트"\n', encoding="utf-8")
+        (course / "L01.toml").write_text(GOOD_LESSON, encoding="utf-8")
+        for name, text in files.items():
+            (course / name).write_text(text, encoding="utf-8")
+        return check_all(root, run=run)[1]
+
+    def test_repository_diagnostics_are_parallel(self):
+        from .lesson_files import load_all
+
+        lessons = load_all()[0].lessons
+        diags = {l.path.name: l for l in lessons if l.kind == "diagnostic"}
+        self.assertEqual(set(diags), {"diag_A.toml", "diag_B.toml"})
+        self.assertEqual([q.qtype for q in diags["diag_A.toml"].questions],
+                         [q.qtype for q in diags["diag_B.toml"].questions])
+
+    def test_good_pair_passes_and_runs(self):
+        report = self.check({"diag_A.toml": diag_text("A", 101), "diag_B.toml": diag_text("B", 102)}, run=True)
+        self.assertEqual(report.errors, [])
+        self.assertIn("진단 A", "\n".join(report.lines))
+
+    def test_rules(self):
+        def errors(files):
+            return " / ".join(self.check(files).errors)
+
+        b_flow = diag_text("B", 102, qtypes=["predict"] * 9 + ["flow"])
+        self.assertIn("유형 순서가 다름", errors({"diag_A.toml": diag_text("A", 101), "diag_B.toml": b_flow}))
+        self.assertIn("두 세트가 같이", errors({"diag_A.toml": diag_text("A", 101)}))
+        self.assertIn("order_no는 101", errors({"diag_A.toml": diag_text("A", 5), "diag_B.toml": diag_text("B", 102)}))
+        self.assertIn("diag_A.toml 또는", errors({"진단.toml": diag_text("A", 101)}))
+        nine = diag_text("A", 101, qtypes=["predict"] * 9, answers=[1, 2, 3, 4, 1, 2, 3, 4, 1])
+        self.assertIn("10문제여야", errors({"diag_A.toml": nine, "diag_B.toml": diag_text("B", 102)}))
+
+    def test_answer_crowding_warning(self):
+        crowded = diag_text("A", 101, answers=[2] * 10)
+        report = self.check({"diag_A.toml": crowded, "diag_B.toml": diag_text("B", 102)})
+        self.assertTrue(any("진단 A의 정답이 2번에 10/10" in w for w in report.warnings), report.warnings)
+
+    def test_diagnostic_numbers_do_not_break_lesson_numbering(self):
+        report = self.check({"diag_A.toml": diag_text("A", 101), "diag_B.toml": diag_text("B", 102)})
+        self.assertFalse(any("빈칸 없이" in e for e in report.errors), report.errors)

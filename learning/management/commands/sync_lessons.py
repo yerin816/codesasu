@@ -20,6 +20,13 @@ LESSON_FIELDS = ["kind", "track", "title", "body_md", "est_minutes", "is_publish
 QUESTION_FIELDS = ["qtype", "prompt", "code", "choices", "answer", "explanation"]
 
 
+def _name(ld):
+    """로그에 쓰는 이름: 레슨은 L03, 진단은 '진단 A'"""
+    if ld.kind == "diagnostic":
+        return ld.path.stem.replace("diag_", "진단 ")
+    return f"L{ld.order_no:02d}"
+
+
 def _apply(obj, values):
     """바뀐 필드 이름 목록을 돌려주고 obj에 값을 넣는다"""
     changed = [k for k, v in values.items() if getattr(obj, k) != v]
@@ -90,23 +97,23 @@ class Command(BaseCommand):
             lesson = Lesson.objects.filter(course=course, order_no=ld.order_no).first()
             if lesson is None:
                 lesson = Lesson.objects.create(course=course, order_no=ld.order_no, **values)
-                self._count(True, [], f"L{ld.order_no:02d} {ld.title}")
+                self._count(True, [], f"{_name(ld)} {ld.title}")
             else:
                 changed = _apply(lesson, values)
                 if changed:
                     lesson.save()
-                self._count(False, changed, f"L{ld.order_no:02d} {ld.title}")
+                self._count(False, changed, f"{_name(ld)} {ld.title}")
             self._sync_questions(lesson, ld)
 
         file_numbers = {ld.order_no for ld in data.lessons}
         for extra in course.lessons.exclude(order_no__in=file_numbers):
-            self.notes.append(f"  ! L{extra.order_no:02d} {extra.title}: 파일에 없음 - 그대로 둠")
+            self.notes.append(f"  ! {extra.order_no}번 {extra.title}: 파일에 없음 - 그대로 둠")
 
     def _sync_questions(self, lesson, ld):
         for qd in ld.questions:
             values = {"qtype": qd.qtype, "prompt": qd.prompt, "code": qd.code, "choices": qd.choices,
                       "answer": qd.answer, "explanation": qd.explanation}
-            label = f"L{ld.order_no:02d} 문제{qd.order_no}"
+            label = f"{_name(ld)} 문제{qd.order_no}"
             question = Question.objects.filter(lesson=lesson, order_no=qd.order_no).first()
             if question is None:
                 Question.objects.create(lesson=lesson, order_no=qd.order_no, **values)
@@ -121,11 +128,11 @@ class Command(BaseCommand):
 
         for extra in lesson.questions.exclude(order_no__in=[q.order_no for q in ld.questions]):
             if extra.attempts.exists() or extra.hints.exists() or extra.reveals.exists():
-                self.notes.append(f"  ! L{ld.order_no:02d} 문제{extra.order_no}: 파일에 없지만 푼 기록이 있어 그대로 둠 "
+                self.notes.append(f"  ! {_name(ld)} 문제{extra.order_no}: 파일에 없지만 푼 기록이 있어 그대로 둠 "
                                   "(관리자 화면에서 지우거나 파일에 다시 넣어 주세요)")
             else:
                 extra.delete()
-                self.notes.append(f"  - L{ld.order_no:02d} 문제{extra.order_no}: 파일에 없어 지움(푼 기록 없음)")
+                self.notes.append(f"  - {_name(ld)} 문제{extra.order_no}: 파일에 없어 지움(푼 기록 없음)")
 
 
 class _DryRun(Exception):
