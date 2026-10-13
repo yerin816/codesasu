@@ -1,0 +1,70 @@
+# L10 초안 (10/13) - 폰 미리보기 점검 후 published = true로 바꾸면 공개
+order_no = 10
+track = "error"
+title = "파일을 못 열면 위치와 글자 방식부터 본다"
+est_minutes = 9
+published = false
+body = '''
+AI가 짠 코드가 파일을 못 열 때 원인은 대부분 두 가지예요. 파일이 있는 위치, 그리고 파일에 글자를 저장한 방식이에요.
+
+`open("매출.csv")`처럼 파일 이름만 쓰면, 파이썬은 코드를 실행한 폴더에서 그 파일을 찾아요. 파일이 다른 폴더(예: data 폴더) 안에 있으면 FileNotFoundError가 나요. 에러 문구는 '그런 파일이나 폴더가 없다'는 뜻이에요. 이때는 `"data/매출.csv"`처럼 폴더까지 적어야 해요.
+
+```
+No such file or directory
+```
+
+파일은 열리는데 읽다가 UnicodeDecodeError가 나면 글자 방식이 다른 거예요. 한국어 윈도우 엑셀에서 'CSV (쉼표로 분리)'로 저장한 파일은 cp949 방식인 경우가 많은데, 코드는 utf-8로 읽으려고 해서 나요. 에러 문구에 'utf-8' codec이 보이면 `encoding="cp949"`로 바꿔 읽어 보세요.
+'''
+
+[[questions]]
+qtype = "error"
+prompt = "10월 매출 파일을 여는데 4번째 줄에서 FileNotFoundError: [Errno 2] No such file or directory: '매출_10월.csv' 에러가 났어요. 파일은 data 폴더 안에 있어요. 원인은 무엇일까요?"
+code = '''
+import csv
+
+path = "매출_10월.csv"
+with open(path, encoding="utf-8") as f:
+    rows = list(csv.reader(f))
+print(len(rows))
+'''
+choices = [
+    "csv 파일은 파이썬으로 열 수 없다",
+    "한글 파일 이름은 쓸 수 없다",
+    "encoding을 cp949로 바꿔야 한다",
+    "실행한 폴더에서 찾는데 파일은 data 폴더 안에 있다",
+]
+answer = 4
+explanation = "파일 이름만 쓰면 코드를 실행한 폴더에서 찾아요. 파일은 data 폴더 안에 있어서 '그런 파일이 없다'는 에러가 나요. 3번째 줄을 path = \"data/매출_10월.csv\"로 바꾸면 열려요. ① csv 모듈로 잘 읽어요. ② 한글 이름도 열 수 있어요. ③ 글자 방식 문제면 파일은 열리고 읽다가 UnicodeDecodeError가 나요."
+
+[questions.check]
+error = "FileNotFoundError"
+files = [ { path = "data/매출_10월.csv", text = "날짜,금액\n2026-10-01,300\n" } ]
+
+[[questions]]
+qtype = "fix_line"
+prompt = "다른 팀에게 받은 고객 명단 CSV를 여는데 3번째 줄에서 UnicodeDecodeError: 'utf-8' codec can't decode byte 에러가 났어요. 엑셀에서 저장한 한글 파일이에요. 어떻게 고쳐야 할까요?"
+code = '''
+path = "고객명단.csv"
+with open(path, encoding="utf-8") as f:
+    text = f.read()
+print(text.splitlines()[0])
+'''
+choices = [
+    "4번째 줄의 [0]을 [1]로 바꾼다",
+    "3번째 줄의 read()를 readline()으로 바꾼다",
+    "2번째 줄의 encoding을 \"cp949\"로 바꾼다",
+    "2번째 줄의 utf-8을 UTF-8(대문자)로 바꾼다",
+]
+answer = 3
+explanation = "에러 문구의 'utf-8' codec은 'utf-8 방식으로 읽다가 실패했다'는 뜻이에요. 이 파일은 cp949 방식으로 저장돼 있어서 encoding=\"cp949\"로 바꾸면 첫 줄 '이름,부서'가 나와요. ① 첫 줄인지 둘째 줄인지와 상관없이 읽는 단계에서 에러가 나요. ② 한 줄만 읽어도 글자 방식이 달라 같은 에러가 나요. ④ 대문자도 같은 utf-8 방식이에요."
+
+[questions.check]
+line = 2
+fix = 'with open(path, encoding="cp949") as f:'
+expect = "이름,부서"
+files = [ { path = "고객명단.csv", text = "이름,부서\n김하늘,영업\n", encoding = "cp949" } ]
+wrong = [
+    { choice = 1, line = 4, fix = "print(text.splitlines()[1])" },
+    { choice = 2, line = 3, fix = "    text = f.readline()" },
+    { choice = 4, line = 2, fix = 'with open(path, encoding="UTF-8") as f:' },
+]
