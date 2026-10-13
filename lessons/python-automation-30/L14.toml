@@ -1,9 +1,9 @@
-# L14 초안 (10/13) - 폰 미리보기 점검 후 published = true로 바꾸면 공개
+# L14 (10/13 작성, 폰 미리보기 점검 후 공개)
 order_no = 14
 track = "shipping"
 title = "원본은 지키고, 실행 전에 미리 본다"
 est_minutes = 9
-published = false
+published = true
 body = '''
 업무 자동화 코드는 파일을 저장하거나 지우는 일을 해요. 한 번 실행하면 되돌릴 수 없는 일이라, 실행하기 전에 두 가지를 확인해요.
 
