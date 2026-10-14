@@ -221,3 +221,18 @@ class Profile(models.Model):
 
     def __str__(self):
         return f"{self.user} - 주 {self.weekly_goal_days}일"
+
+
+class LessonView(models.Model):
+    """레슨 화면을 연 기록 (WBS 6.1 단계별 이탈). 풀이 시작·답·완료는 다른 표에 이미 남으므로
+    '열어 보고 문제 풀기를 누르지 않은 사람'만 여기서 센다. 리포트: python manage.py funnel"""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True, blank=True, related_name="lesson_views",
+    )
+    guest_key = models.CharField(max_length=64, blank=True)
+    lesson = models.ForeignKey(Lesson, on_delete=models.CASCADE, related_name="views")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["lesson", "created_at"])]

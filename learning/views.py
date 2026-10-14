@@ -20,7 +20,8 @@ from django.views.decorators.http import require_GET, require_http_methods, requ
 
 from .embeddings import EmbeddingError
 from .hints import DAILY_LIMIT, LLMError, generate_hint
-from .models import AnswerAttempt, ExplanationReveal, HintRequest, Lesson, LessonProgress, Profile, Question
+from .models import (AnswerAttempt, ExplanationReveal, HintRequest, Lesson, LessonProgress, LessonView, Profile,
+                     Question)
 
 logger = logging.getLogger(__name__)
 
@@ -229,6 +230,12 @@ def lesson_detail(request, lesson_id):
         return error("NOT_FOUND", "레슨을 찾을 수 없어요.", 404)
     if not can_open(request, lesson):
         return error("NOT_AUTHENTICATED", "로그인하면 다음 레슨을 풀 수 있어요.", 401)
+
+    # 단계별 이탈을 재려고 레슨을 연 기록을 남긴다 (6.1). 게스트는 가입하면 계정으로 옮긴다(signals)
+    if request.user.is_authenticated:
+        LessonView.objects.create(user=request.user, lesson=lesson)
+    else:
+        LessonView.objects.create(guest_key=get_guest_key(request), lesson=lesson)
 
     questions = [
         {

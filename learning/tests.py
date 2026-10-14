@@ -1583,3 +1583,66 @@ class PreDiagnosticTests(ApiTestCase):
     def test_regular_lesson_ignores_phase_from_client(self):
         pid = self.post("/api/v1/lessons/1/progress", {"phase": "pre"}).json()["progress_id"]
         self.assertEqual(LessonProgress.objects.get(id=pid).phase, "")
+
+
+class FunnelTests(ApiTestCase):
+    """6.1 단계별 이탈: 레슨 열람 기록과 funnel 리포트"""
+
+    def run_funnel(self, *args):
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        out = StringIO()
+        call_command("funnel", *args, stdout=out)
+        return out.getvalue()
+
+    def test_counts_people_per_step_and_excludes_staff_and_test_accounts(self):
+        from .models import LessonView
+
+        guest = Client()  # 열고, 시작하고, 1번만 답하고 나감
+        guest.get("/api/v1/lessons/1")
+        pid = self.start(1, client=guest)
+        self.answer(pid, 1, 1, client=guest)
+
+        self.client.force_login(self.make_user())  # 두 번 열고 끝까지 (한 명으로 셈)
+        self.client.get("/api/v1/lessons/1")
+        self.client.get("/api/v1/lessons/1")
+        self.solve_all(1)
+
+        viewer = Client()  # 열기만 함
+        viewer.force_login(self.make_user("viewer@example.com"))
+        viewer.get("/api/v1/lessons/1")
+
+        for email, staff in [("staff@example.com", True), ("tester@example.com", False)]:
+            c = Client()
+            u = self.make_user(email)
+            u.is_staff = staff
+            u.save()
+            c.force_login(u)
+            c.get("/api/v1/lessons/1")
+            self.solve_all(1, client=c)
+
+        self.assertEqual(LessonView.objects.filter(lesson_id=1).count(), 6)
+        out = self.run_funnel("--exclude", "tester@example.com")
+        self.assertIn("L01 열람 3 → 시작 2(66%) → 1번 답 2(100%) → 2번 답 1(50%) → 완료 1(100%)", out)
+        self.assertIn("가장 많이 빠진 곳: 시작 앞 (1명)", out)
+        self.assertNotIn("L02", out)  # 아무도 안 연 레슨은 빼고 보여 준다
+
+        out = self.run_funnel()
+        self.assertIn("L01 열람 4 →", out)  # 테스트 계정을 빼지 않으면 4명 (관리자는 항상 뺌)
+        self.assertIn("기간", self.run_funnel("--since", "2026-01-01"))
+
+    def test_guest_views_move_to_account_on_login(self):
+        from .models import LessonView
+
+        self.client.get("/api/v1/lessons/1")
+        user = self.make_user()
+        self.client.post("/accounts/login/", {"login": user.email, "password": "test-pass-1234!"})
+        self.assertEqual(LessonView.objects.get().user_id, user.id)
+
+    def test_bad_since(self):
+        from django.core.management.base import CommandError
+
+        with self.assertRaises(CommandError):
+            self.run_funnel("--since", "11/9")
