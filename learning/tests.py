@@ -1445,3 +1445,16 @@ class WeeklyGoalAndRecordsTests(ApiTestCase):
         self.assertContains(res, 'data-page="records"')
         self.assertIn("csrftoken", res.cookies)
         self.assertContains(self.client.get("/"), 'href="/records/"')  # 상단 '기록' 링크
+
+
+class GoogleAccountChooserTests(TestCase):
+    """구글 로그인은 매번 계정 고르는 화면을 띄운다 (10/14 폰 점검: 다른 계정으로 못 바꿈)"""
+
+    def test_google_login_asks_to_select_account(self):
+        from urllib.parse import parse_qs, urlparse
+
+        res = self.client.post("/accounts/google/login/")
+        self.assertEqual(res.status_code, 302)
+        url = urlparse(res["Location"])
+        self.assertEqual(url.netloc, "accounts.google.com")
+        self.assertEqual(parse_qs(url.query)["prompt"], ["select_account"])

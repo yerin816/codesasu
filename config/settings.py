@@ -180,7 +180,10 @@ SOCIALACCOUNT_PROVIDERS = {
             "secret": os.environ["GOOGLE_CLIENT_SECRET"],
         },
         "SCOPE": ["profile", "email"],
-        "AUTH_PARAMS": {"access_type": "online"},
+        # select_account: 구글 로그인 때마다 계정 고르는 화면을 띄운다.
+        # 없으면 폰 브라우저에 구글 계정이 하나만 있을 때 바로 그 계정으로 들어가
+        # 로그아웃 뒤 다른 계정으로 바꿀 수 없다 (10/14 폰 점검)
+        "AUTH_PARAMS": {"access_type": "online", "prompt": "select_account"},
     }
 }
 
