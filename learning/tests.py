@@ -1369,6 +1369,7 @@ class WeeklyGoalAndRecordsTests(ApiTestCase):
     def test_weekly_counts_last_four_weeks_by_korean_date(self):
         self.patch_me({"weekly_goal_days": 3})
         utc = dt_timezone.utc
+        get_user_model().objects.filter(id=self.user.id).update(date_joined=datetime(2026, 8, 1, tzinfo=utc))
         # 지금: 한국 10/14(수) 15:00. 이번 주 월요일 = 10/12
         now = datetime(2026, 10, 14, 6, 0, tzinfo=utc)
         self.done_at(1, datetime(2026, 10, 12, 1, 0, tzinfo=utc))   # 이번 주 월
@@ -1458,3 +1459,34 @@ class GoogleAccountChooserTests(TestCase):
         url = urlparse(res["Location"])
         self.assertEqual(url.netloc, "accounts.google.com")
         self.assertEqual(parse_qs(url.query)["prompt"], ["select_account"])
+
+
+class WeeklySinceJoinTests(ApiTestCase):
+    """갓 가입한 사람에게 가입 전 주를 0일로 보여 주지 않는다 (10/14 폰 점검, FR-11)"""
+
+    def test_weeks_start_from_join_week(self):
+        utc = dt_timezone.utc
+        user = self.make_user()
+        self.client.force_login(user)
+        now = datetime(2026, 10, 14, 6, 0, tzinfo=utc)  # 한국 10/14(수)
+        cases = [
+            (datetime(2026, 10, 13, 16, 0, tzinfo=utc), ["2026-10-12"]),                # 한국 10/14 가입
+            (datetime(2026, 10, 11, 16, 0, tzinfo=utc), ["2026-10-12"]),                # 한국 10/12(월) 01시
+            (datetime(2026, 10, 11, 14, 0, tzinfo=utc), ["2026-10-12", "2026-10-05"]),  # 한국 10/11(일) 23시
+            (datetime(2026, 1, 1, tzinfo=utc), ["2026-10-12", "2026-10-05", "2026-09-28", "2026-09-21"]),
+        ]
+        for joined, expected in cases:
+            get_user_model().objects.filter(id=user.id).update(date_joined=joined)
+            with mock.patch("django.utils.timezone.now", return_value=now):
+                weeks = self.client.get("/api/v1/progress/weekly?weeks=4").json()["weeks"]
+            self.assertEqual([w["week_start"] for w in weeks], expected, joined)
+
+    def test_google_login_post_goes_straight_to_google(self):
+        """화면의 구글 버튼은 POST로 보낸다. POST면 '계속' 확인 화면 없이 바로 구글로 간다"""
+        res = self.client.get("/accounts/google/login/?next=/")
+        self.assertEqual(res.status_code, 200)  # 링크(GET)로 오면 확인 화면
+        res = self.client.post("/accounts/google/login/?next=/")
+        self.assertEqual(res.status_code, 302)
+        self.assertTrue(res["Location"].startswith("https://accounts.google.com/"))
+        js = open(os.path.join(settings.BASE_DIR, "learning/static/learning/app.js"), encoding="utf-8").read()
+        self.assertIn('a[href^="/accounts/google/login/"]', js)

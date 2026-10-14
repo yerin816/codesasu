@@ -178,9 +178,9 @@ async function initRecords() {
       aria-label="끝낸 레슨 ${done}개 / ${rec.total}개"><span style="width:${pct}%"></span></div>
     <p class="muted small">끝낸 레슨 ${esc(done)} / ${esc(rec.total)}개</p>`;
 
-  // 2) 최근 4주: 이번 주가 맨 위. 연속 기록은 보여주지 않는다 (FR-11)
+  // 2) 주별 기록(최근 4주, 가입한 주부터): 이번 주가 맨 위. 연속 기록은 보여주지 않는다 (FR-11)
   const weeksBox = $("#weeks");
-  weeksBox.innerHTML = `<p class="eyebrow">최근 4주</p>
+  weeksBox.innerHTML = `<p class="eyebrow">주별 기록</p>
     <ul class="week-list">${weeksRes.data.weeks.map((w, i) => {
       let dots = "";
       for (let k = 0; k < w.goal_days; k++) dots += `<span class="dot${k < w.done_days ? " on" : ""}"></span>`;
@@ -591,10 +591,30 @@ async function finishLesson() {
   window.scrollTo(0, 0);
 }
 
+/* 구글 로그인 버튼: 링크(GET)로 가면 allauth가 '계속' 확인 화면을 한 번 더 보여 준다.
+ * 누를 때 POST로 보내 확인 화면 없이 바로 구글 계정 선택으로 간다 (10/14 폰 점검).
+ * CSRF 쿠키가 없으면(드문 경우) 원래 링크대로 확인 화면을 거친다 */
+function postGoogleLogin(event) {
+  const link = event.target.closest('a[href^="/accounts/google/login/"]');
+  if (!link || !csrfToken()) return;
+  event.preventDefault();
+  const form = document.createElement("form");
+  form.method = "post";
+  form.action = link.getAttribute("href");
+  const token = document.createElement("input");
+  token.type = "hidden";
+  token.name = "csrfmiddlewaretoken";
+  token.value = csrfToken();
+  form.appendChild(token);
+  document.body.appendChild(form);
+  form.submit();
+}
+
 /* ---------------- 시작 ---------------- */
 
 document.addEventListener("DOMContentLoaded", () => {
   const page = document.body.dataset.page;
+  document.addEventListener("click", postGoogleLogin);
   if (page === "home") initHome();
   if (page === "records") initRecords();
   if (page === "lesson") {

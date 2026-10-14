@@ -472,6 +472,7 @@ def me(request):
 @login_required_json
 def weekly_progress(request):
     """GET /api/v1/progress/weekly?weeks=4 : 최근 몇 주의 주별 달성 (FR-12). 이번 주가 맨 앞.
+    가입하기 전 주는 빼고 보낸다 (갓 가입한 사람에게 0일짜리 지난주를 보여 주지 않기, 10/14 폰 점검).
     지난주들도 지금의 목표로 비교한다 (목표를 바꾼 이력은 저장하지 않는다)"""
     try:
         weeks = int(request.GET.get("weeks", 4))
@@ -482,11 +483,15 @@ def weekly_progress(request):
 
     goal = get_profile(request.user).weekly_goal_days
     monday = this_monday()
-    first = monday - timedelta(weeks=weeks - 1)
+    joined = timezone.localtime(request.user.date_joined).date()
+    joined_monday = joined - timedelta(days=joined.weekday())
+    first = max(monday - timedelta(weeks=weeks - 1), min(joined_monday, monday))
     dates = study_dates(request.user, first)
     result = []
     for i in range(weeks):
         start = monday - timedelta(weeks=i)
+        if start < first:
+            break
         done = sum(1 for d in dates if start <= d < start + timedelta(days=7))
         result.append({"week_start": start.isoformat(), "done_days": done, "goal_days": goal,
                        "achieved": done >= goal})
