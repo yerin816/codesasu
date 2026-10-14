@@ -17,5 +17,7 @@ urlpatterns = [
     path("manifest.webmanifest", pages.manifest, name="manifest"),
     path("sw.js", pages.service_worker, name="service-worker"),
     path("lessons/<int:lesson_id>/", pages.lesson, name="lesson"),
+    path("privacy/", pages.privacy, name="privacy"),
+    path("terms/", pages.terms, name="terms"),
     path("", pages.home, name="home"),
 ]

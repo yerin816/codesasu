@@ -34,6 +34,12 @@
       </ul>
     {% endif %}
     {% block main %}{% block content %}{% endblock %}{% endblock %}
+    {% block footer %}
+    <footer class="site-footer">
+      <p>코드사수는 AI가 짠 업무용 파이썬 코드를 비개발 직장인이 하루 10분씩 읽고, 고치고, 안전하게 내보내는 연습을 하는 학습 앱이에요. (베타 · 개인 프로젝트)</p>
+      <p><a href="{% url 'privacy' %}">개인정보처리방침</a> · <a href="{% url 'terms' %}">이용약관</a></p>
+    </footer>
+    {% endblock %}
   </main>
 
   <script src="{% static 'learning/app.js' %}"></script>

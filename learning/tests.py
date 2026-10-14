@@ -1287,3 +1287,20 @@ class PhoneLinkTests(TestCase):
 
     def test_format_detection_off(self):
         self.assertContains(self.client.get("/"), 'name="format-detection" content="telephone=no')
+
+
+class PolicyPageTests(TestCase):
+    """구글 로그인 앱 게시 조건: 개인정보처리방침·이용약관 공개, 홈에서 연결 (10/14)"""
+
+    def test_policy_pages_public(self):
+        for url, word in (("/privacy/", "개인정보처리방침"), ("/terms/", "이용약관")):
+            res = self.client.get(url)
+            self.assertEqual(res.status_code, 200, url)
+            self.assertContains(res, word)
+        self.assertContains(self.client.get("/privacy/"), "OpenAI")
+
+    def test_home_links_to_policies_but_lesson_page_does_not(self):
+        home = self.client.get("/")
+        self.assertContains(home, 'href="/privacy/"')
+        self.assertContains(home, 'href="/terms/"')
+        self.assertNotContains(self.client.get("/lessons/1/"), 'class="site-footer"')

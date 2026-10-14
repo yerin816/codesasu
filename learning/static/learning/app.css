@@ -355,3 +355,15 @@ pre.code .ln {
   font-size: 13px;
   font-weight: 700;
 }
+
+/* 하단 안내와 정책 링크 (구글 로그인 앱 게시 조건: 홈에서 개인정보처리방침으로 연결) */
+.site-footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; line-height: 1.6; }
+.site-footer p { margin: 0 0 8px; }
+.site-footer a { color: var(--muted); }
+
+/* 정책 문서 */
+.policy { line-height: 1.7; }
+.policy h2 { margin-top: 28px; }
+.policy table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 8px 0 12px; }
+.policy th, .policy td { border: 1px solid var(--line); padding: 8px; text-align: left; vertical-align: top; }
+.policy ul { padding-left: 20px; }

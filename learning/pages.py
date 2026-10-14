@@ -21,6 +21,18 @@ def lesson(request, lesson_id):
 
 
 @require_GET
+def privacy(request):
+    """개인정보처리방침 (구글 로그인 앱 게시 조건, 베타 전 공개)"""
+    return render(request, "learning/privacy.html")
+
+
+@require_GET
+def terms(request):
+    """이용약관"""
+    return render(request, "learning/terms.html")
+
+
+@require_GET
 def manifest(request):
     """PWA 설치 정보. 홈 화면 아이콘·이름·주소창 없이 열기 (FR-13)"""
     return render(
