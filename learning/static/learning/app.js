@@ -116,7 +116,7 @@ async function initHome() {
     box.innerHTML = `<p class="error">${esc(res.message)}</p>`;
     return;
   }
-  const { lesson, week, is_guest, needs_onboarding } = res.data;
+  const { lesson, week, is_guest, needs_onboarding, pre_diagnostic } = res.data;
 
   if (needs_onboarding) {
     // 처음 로그인: 레슨보다 주간 목표를 먼저 고른다 (FR-02)
@@ -130,7 +130,27 @@ async function initHome() {
     return;
   }
 
-  if (!lesson) {
+  if (pre_diagnostic) {
+    // 목표를 고른 뒤 첫 레슨 전에 사전 진단 (FR-03). 건너뛸 수 있지만 그러면 베타 비교에서 빠진다
+    box.innerHTML = `<p class="eyebrow">시작하기 전에</p>
+      <h2>지금 코드 읽기 실력부터 재 볼까요?</h2>
+      <p class="muted small">10문제 · 약 ${esc(pre_diagnostic.est_minutes)}분. 문제마다 한 번씩 답하고, 맞았는지는 다 풀고 나서 알려 드려요.
+        베타 마지막 주에 다른 문제로 한 번 더 재서 얼마나 늘었는지 비교해 드려요.</p>
+      <a class="btn primary" href="/lessons/${encodeURIComponent(pre_diagnostic.id)}/">진단 시작하기</a>
+      <button type="button" class="btn ghost" id="skip-diag">레슨부터 할게요</button>
+      <p class="muted small center">건너뛰면 나중에 실력 비교 결과를 볼 수 없어요.</p>
+      <div id="diag-msg"></div>`;
+    $("#skip-diag").addEventListener("click", async (e) => {
+      e.target.disabled = true;
+      const r = await api("diagnostics/pre/skip", {});
+      if (!r.ok) {
+        e.target.disabled = false;
+        $("#diag-msg").innerHTML = `<p class="error small">${esc(r.message)}</p>`;
+        return;
+      }
+      initHome();
+    });
+  } else if (!lesson) {
     box.innerHTML = `<h2>준비된 레슨을 모두 끝냈어요</h2>
       <p class="muted">새 레슨이 올라오면 여기에 보여 드릴게요.</p>`;
   } else {
@@ -269,11 +289,12 @@ async function initLesson() {
   const l = state.lesson;
   const preview = l.is_preview
     ? `<p class="preview-note">미리보기: 공개 전 초안이에요. 관리자에게만 보여요.</p>` : "";
-  intro.innerHTML = `${preview}<p class="tag">${esc(TRACK[l.track] || "")} · 약 ${esc(l.est_minutes)}분</p>
+  const tag = l.is_diagnostic ? "사전 진단" : (TRACK[l.track] || "");
+  intro.innerHTML = `${preview}<p class="tag">${esc(tag)} · 약 ${esc(l.est_minutes)}분</p>
     <h1>${esc(l.title)}</h1>
     <div class="body">${markdown(l.body_md)}</div>`;
   fitSnippets();
-  setActions([{ label: `문제 풀기 (${l.questions.length}문제)`, onClick: startQuiz }]);
+  setActions([{ label: `${l.is_diagnostic ? "진단 시작" : "문제 풀기"} (${l.questions.length}문제)`, onClick: startQuiz }]);
 }
 
 async function startQuiz() {
@@ -330,8 +351,11 @@ function showQuestion() {
   $("#q-feedback").hidden = true;
   state.hints = [];
   closeSasu();
-  $("#hint-btn").hidden = false;
-  setActions([{ label: "제출하기", id: "submit-btn", onClick: submitAnswer, disabled: true }]);
+  const diag = state.lesson.is_diagnostic;
+  $("#hint-btn").hidden = diag; // 진단에서는 사수 힌트를 쓰지 않는다
+  const last = state.idx === total - 1;
+  const label = diag ? (last ? "제출하고 결과 보기" : "제출하고 다음 문제") : "제출하기";
+  setActions([{ label, id: "submit-btn", onClick: submitAnswer, disabled: true }]);
   window.scrollTo(0, 0);
 }
 
@@ -418,6 +442,13 @@ async function submitAnswer() {
   state.busy = false;
   if (!res.ok) {
     showError(res.message);
+    return;
+  }
+
+  if (state.lesson.is_diagnostic) {
+    // 진단: 맞았는지 보여 주지 않고 바로 다음 문제로 (FR-03)
+    lockChoices();
+    nextAction().onClick();
     return;
   }
 
@@ -560,14 +591,23 @@ async function finishLesson() {
   const loggedIn = document.body.dataset.loggedIn === "1";
   $("#quiz").hidden = true;
 
-  let html = `<p class="eyebrow">레슨 완료</p>
+  const diag = state.lesson.is_diagnostic;
+  let html = diag
+    ? `<p class="eyebrow">사전 진단 완료</p>
+    <h1>지금 실력을 쟀어요</h1>
+    <div class="stats">
+      <div><span class="label">맞힌 문제</span><strong>${esc(d.correct_count)} / ${esc(d.question_count)}</strong></div>
+      <div><span class="label">걸린 시간</span><strong>${esc(minutesText(d.duration_sec))}</strong></div>
+    </div>
+    <p class="muted small">이 점수가 출발점이에요. 레슨을 여는 데는 영향이 없어요. 베타 마지막 주에 다른 문제로 한 번 더 재 볼게요.</p>`
+    : `<p class="eyebrow">레슨 완료</p>
     <h1>오늘 몫을 끝냈어요</h1>
     <div class="stats">
       <div><span class="label">처음에 맞힌 문제</span><strong>${esc(d.correct_count)} / ${esc(d.question_count)}</strong></div>
       <div><span class="label">걸린 시간</span><strong>${esc(minutesText(d.duration_sec))}</strong></div>
     </div>`;
 
-  if (d.week) {
+  if (d.week && !diag) { // 진단은 주간 목표(레슨 푼 날)에 들어가지 않는다
     html += `<div class="card week">${weekHtml(d.week)}</div>`;
   }
   if (!loggedIn) {
@@ -587,7 +627,8 @@ async function finishLesson() {
   const result = $("#result");
   result.innerHTML = html;
   result.hidden = false;
-  setActions([{ label: "홈으로", kind: loggedIn ? "primary" : "ghost", onClick: () => (location.href = "/") }]);
+  setActions([{ label: diag ? "오늘의 레슨 하러 가기" : "홈으로", kind: loggedIn ? "primary" : "ghost",
+    onClick: () => (location.href = "/") }]);
   window.scrollTo(0, 0);
 }
 

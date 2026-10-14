@@ -13,4 +13,5 @@ urlpatterns = [
     path("me", views.me, name="api-me"),
     path("progress/weekly", views.weekly_progress, name="api-weekly-progress"),
     path("progress/lessons", views.lesson_records, name="api-lesson-records"),
+    path("diagnostics/pre/skip", views.skip_pre_diagnostic, name="api-skip-pre-diagnostic"),
 ]

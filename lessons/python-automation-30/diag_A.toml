@@ -5,7 +5,7 @@ order_no = 101
 track = "reading"
 title = "코드 읽기 진단 A"
 est_minutes = 10
-published = false
+published = true  # 10/14 사전 진단 화면과 함께 공개 (진단은 오늘의 레슨·기록 목록에는 나오지 않음)
 body = "코드를 실행하지 않고 읽기만 해서 답을 골라 주세요. 모르는 문제는 짐작하지 말고 가장 그럴듯한 것을 골라도 돼요. 결과는 점수로만 쓰이고, 다음 레슨을 여는 데는 영향이 없어요."
 
 [[questions]]

@@ -1434,8 +1434,8 @@ class WeeklyGoalAndRecordsTests(ApiTestCase):
         self.done_at(diag.id, now)
         body = self.client.get("/api/v1/progress/lessons").json()
         self.assertEqual((body["total"], body["lessons"]), (2, []))
-        # 진단은 공부한 날로 세고, 초안 미리보기는 세지 않는다
-        self.assertEqual(self.client.get("/api/v1/today").json()["week"]["done_days"], 1)
+        # 진단과 초안 미리보기는 주간 목표의 '레슨 푼 날'로 세지 않는다
+        self.assertEqual(self.client.get("/api/v1/today").json()["week"]["done_days"], 0)
 
     def test_records_page_requires_login_and_links_exist(self):
         res = Client().get("/records/")
@@ -1490,3 +1490,96 @@ class WeeklySinceJoinTests(ApiTestCase):
         self.assertTrue(res["Location"].startswith("https://accounts.google.com/"))
         js = open(os.path.join(settings.BASE_DIR, "learning/static/learning/app.js"), encoding="utf-8").read()
         self.assertIn('a[href^="/accounts/google/login/"]', js)
+
+
+class PreDiagnosticTests(ApiTestCase):
+    """가입 직후 사전 진단 (FR-03, FR-15): 목표를 고른 뒤 A·B 중 배정된 세트를 시험처럼 푼다"""
+
+    def setUp(self):
+        from .models import Question
+
+        self.user = self.make_user()
+        self.client.force_login(self.user)
+        course = Lesson.objects.get(id=1).course
+        self.diag = {}
+        for letter, order_no in [("A", 101), ("B", 102)]:
+            lesson = Lesson.objects.create(course=course, order_no=order_no, kind="diagnostic", track="reading",
+                                           title=f"코드 읽기 진단 {letter}", body_md="읽기만 해서 답을 골라 주세요.",
+                                           is_published=True)
+            for n in (1, 2):
+                Question.objects.create(lesson=lesson, order_no=n, qtype="predict", prompt="출력은?",
+                                        code="print(1)", choices=["0", "1"], answer=2, explanation="1이 나온다")
+            self.diag[letter] = lesson
+
+    def set_order(self, order):
+        Profile.objects.update_or_create(user=self.user, defaults={"diag_order": order})
+
+    def onboard(self, order="AB"):
+        self.set_order(order)
+        self.client.patch("/api/v1/me", json.dumps({"weekly_goal_days": 5}), content_type="application/json")
+
+    def pre(self):
+        return self.client.get("/api/v1/today").json()["pre_diagnostic"]
+
+    def test_offered_after_goal_with_assigned_set(self):
+        self.set_order("BA")
+        self.assertIsNone(self.pre())  # 목표 고르기가 먼저
+        self.onboard("BA")
+        self.assertEqual(self.pre()["id"], self.diag["B"].id)
+        self.set_order("AB")
+        self.assertEqual(self.pre()["id"], self.diag["A"].id)
+
+    def test_random_order_uses_both_sets(self):
+        from .models import random_diag_order
+
+        self.assertEqual({random_diag_order() for _ in range(200)}, {"AB", "BA"})
+
+    def test_only_assigned_set_can_be_opened(self):
+        self.onboard("AB")
+        self.assertEqual(self.client.get(f"/api/v1/lessons/{self.diag['A'].id}").status_code, 200)
+        self.assertEqual(self.client.get(f"/api/v1/lessons/{self.diag['B'].id}").status_code, 404)
+        self.assertEqual(Client().get(f"/api/v1/lessons/{self.diag['A'].id}").status_code, 404)
+
+    def test_exam_flow_hides_answers_and_blocks_hints(self):
+        self.onboard("AB")
+        a = self.diag["A"]
+        body = self.client.get(f"/api/v1/lessons/{a.id}").json()
+        self.assertTrue(body["is_diagnostic"])
+        pid = self.start(a.id)
+        self.assertEqual(LessonProgress.objects.get(id=pid).phase, "pre")  # 서버가 정한다
+        q1, q2 = list(a.questions.order_by("order_no"))
+
+        res = self.answer(pid, q1.id, 1).json()  # 오답
+        self.assertEqual(res, {"is_correct": None, "explanation": None, "wrong_streak": 0, "suggest_hint": False})
+        self.assertEqual(self.answer(pid, q1.id, 2).status_code, 400)  # 한 번만
+        self.assertEqual(self.post(f"/api/v1/progress/{pid}/explanation", {"question_id": q1.id}).status_code, 400)
+        self.assertEqual(self.post(f"/api/v1/questions/{q2.id}/hints",
+                                   {"progress_id": pid, "level": 1}).status_code, 400)
+        self.answer(pid, q2.id, 2)  # 정답
+        done = self.post(f"/api/v1/progress/{pid}/complete").json()
+        self.assertEqual((done["correct_count"], done["question_count"]), (1, 2))
+        self.assertEqual(done["week"]["done_days"], 0)
+
+        self.assertIsNone(self.pre())  # 끝냈으면 다시 권하지 않고
+        self.assertEqual(self.client.get(f"/api/v1/lessons/{a.id}").status_code, 404)  # 다시 열 수 없다
+        body = self.client.get("/api/v1/today").json()
+        self.assertEqual(body["lesson"]["id"], 1)  # 오늘의 레슨은 그대로 첫 레슨
+        self.assertEqual(self.client.get("/api/v1/progress/lessons").json()["lessons"], [])  # 기록 목록에 안 나옴
+
+    def test_skip_and_guest(self):
+        self.onboard("AB")
+        self.assertEqual(self.post("/api/v1/diagnostics/pre/skip").status_code, 200)
+        self.assertIsNone(self.pre())
+        self.assertIsNotNone(Profile.objects.get(user=self.user).pre_diag_skipped_at)
+        self.assertEqual(self.post("/api/v1/diagnostics/pre/skip", client=Client()).status_code, 401)
+
+    def test_not_offered_once_two_lessons_done(self):
+        self.onboard("AB")
+        self.solve_all(1)  # 게스트로 첫 레슨을 풀고 가입한 경우와 같음
+        self.assertIsNotNone(self.pre())
+        self.solve_all(2)
+        self.assertIsNone(self.pre())
+
+    def test_regular_lesson_ignores_phase_from_client(self):
+        pid = self.post("/api/v1/lessons/1/progress", {"phase": "pre"}).json()["progress_id"]
+        self.assertEqual(LessonProgress.objects.get(id=pid).phase, "")

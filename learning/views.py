@@ -83,6 +83,45 @@ def openable_lessons(request):
     return published_lessons()
 
 
+DIAG_ORDER_NO = {"A": 101, "B": 102}  # 레슨 파일 diag_A·diag_B의 번호 (레슨 검사기 규칙)
+
+
+def diagnostic_lesson(letter):
+    return Lesson.objects.filter(
+        kind=Lesson.Kind.DIAGNOSTIC, order_no=DIAG_ORDER_NO[letter],
+        is_published=True, course__is_published=True,
+    ).first()
+
+
+def pending_pre_diagnostic(user):
+    """아직 풀지 않은 사전 진단 레슨. 없거나 이미 끝났거나 건너뛰었으면 None (FR-03).
+    사전 진단은 배우기 전 실력을 재는 것이라, 레슨을 2개 이상 끝낸 사람에게는 내지 않는다
+    (가입 전 게스트로 푼 첫 레슨 1개는 허용)"""
+    profile = get_profile(user)
+    if profile.onboarded_at is None or profile.pre_diag_skipped_at is not None:
+        return None
+    done = LessonProgress.objects.filter(user=user, completed_at__isnull=False)
+    if done.filter(phase=LessonProgress.Phase.PRE).exists():
+        return None
+    if done.filter(lesson__kind=Lesson.Kind.LESSON).values("lesson_id").distinct().count() >= 2:
+        return None
+    return diagnostic_lesson(profile.diag_order[0])
+
+
+def find_lesson(request, lesson_id):
+    """레슨 화면·풀이 시작에서 열 수 있는 레슨. 일반 레슨 + 내 차례인 사전 진단"""
+    lesson = openable_lessons(request).select_related("course").filter(id=lesson_id).first()
+    if lesson is None and request.user.is_authenticated:
+        diag = pending_pre_diagnostic(request.user)
+        if diag is not None and diag.id == lesson_id:
+            lesson = diag
+    return lesson
+
+
+def is_diagnostic(lesson):
+    return lesson.kind == Lesson.Kind.DIAGNOSTIC
+
+
 def is_preview(lesson):
     return not (lesson.is_published and lesson.course.is_published)
 
@@ -119,9 +158,9 @@ def this_monday():
 
 def study_dates(user, since):
     """since(날짜)부터 레슨을 끝낸 날짜들(한국 시간). 하루에 여러 개 끝내도 1일 (FR-11).
-    관리자가 공개 전 초안을 미리 푼 기록은 넣지 않는다"""
+    관리자가 공개 전 초안을 미리 푼 기록과 진단은 넣지 않는다 (주간 목표 = 레슨을 푼 날, 베타 달성률이 부풀지 않게)"""
     completed = LessonProgress.objects.filter(
-        user=user, completed_at__date__gte=since,
+        user=user, completed_at__date__gte=since, lesson__kind=Lesson.Kind.LESSON,
         lesson__is_published=True, lesson__course__is_published=True,
     ).values_list("completed_at", flat=True)
     return {timezone.localtime(t).date() for t in completed}
@@ -170,11 +209,14 @@ def today(request):
     ).values_list("lesson_id", flat=True)
     # 아직 끝내지 않은 첫 레슨. 전부 끝냈으면 None
     lesson = published_lessons().exclude(id__in=done_ids).first()
+    pre = pending_pre_diagnostic(request.user)
     return ok({
         "lesson": lesson_brief(lesson) if lesson else None,
         "week": week_summary(request.user),
         # 처음 로그인하면 홈에서 주간 목표부터 고른다 (FR-02)
         "needs_onboarding": get_profile(request.user).onboarded_at is None,
+        # 목표를 고른 뒤 첫 레슨 전에 사전 진단을 권한다 (FR-03). 끝냈거나 건너뛰었으면 None
+        "pre_diagnostic": lesson_brief(pre) if pre else None,
         "is_guest": False,
     })
 
@@ -182,7 +224,7 @@ def today(request):
 @require_GET
 def lesson_detail(request, lesson_id):
     """GET /api/v1/lessons/{id} : 레슨 본문과 문제. 정답·해설은 보내지 않는다 (FR-05)"""
-    lesson = openable_lessons(request).select_related("course").filter(id=lesson_id).first()
+    lesson = find_lesson(request, lesson_id)
     if lesson is None:
         return error("NOT_FOUND", "레슨을 찾을 수 없어요.", 404)
     if not can_open(request, lesson):
@@ -204,13 +246,14 @@ def lesson_detail(request, lesson_id):
         "body_md": lesson.body_md,
         "questions": questions,
         "is_preview": is_preview(lesson),  # 관리자가 공개 전 초안을 보는 중
+        "is_diagnostic": is_diagnostic(lesson),  # 진단: 정답 표시·해설·힌트 없이 한 번씩만 답한다
     })
 
 
 @require_POST
 def start_progress(request, lesson_id):
     """POST /api/v1/lessons/{id}/progress : 풀이 시작. 다시 풀면 새 기록 (FR-07)"""
-    lesson = openable_lessons(request).filter(id=lesson_id).first()
+    lesson = find_lesson(request, lesson_id)
     if lesson is None:
         return error("NOT_FOUND", "레슨을 찾을 수 없어요.", 404)
     if not can_open(request, lesson):
@@ -219,9 +262,8 @@ def start_progress(request, lesson_id):
     data = read_json(request)
     if data is None:
         return error("VALIDATION_ERROR", "요청 형식이 올바르지 않아요.", 400)
-    phase = data.get("phase", "")
-    if phase not in ("", *LessonProgress.Phase.values):
-        return error("VALIDATION_ERROR", "phase는 pre 또는 post만 쓸 수 있어요.", 400)
+    # 사전·사후 구분은 서버가 정한다. 지금 열 수 있는 진단은 사전 진단뿐이다 (사후는 베타 마지막 주에 연다)
+    phase = LessonProgress.Phase.PRE if is_diagnostic(lesson) else ""
 
     if request.user.is_authenticated:
         progress = LessonProgress.objects.create(user=request.user, lesson=lesson, phase=phase)
@@ -258,6 +300,9 @@ def submit_answer(request, progress_id):
     if not is_number(selected) or not 1 <= selected <= len(question.choices):
         return error("VALIDATION_ERROR", "선택지 번호가 올바르지 않아요.", 400)
 
+    diagnostic = is_diagnostic(progress.lesson)
+    if diagnostic and progress.attempts.filter(question=question).exists():
+        return error("VALIDATION_ERROR", "진단은 문제마다 한 번만 답할 수 있어요.", 400)
     # 맞힌 문제나 해설을 본 문제는 다시 풀지 않는다 (기록이 부풀지 않게)
     if progress.attempts.filter(question=question, is_correct=True).exists():
         return error("VALIDATION_ERROR", "이미 맞힌 문제예요. 다음 문제로 넘어가 주세요.", 400)
@@ -282,6 +327,9 @@ def submit_answer(request, progress_id):
             break
         wrong_streak += 1
 
+    if diagnostic:
+        # 진단 중에는 맞았는지도 알려 주지 않는다. 점수는 다 풀고 나서 맞힌 수로만 보여 준다
+        return ok({"is_correct": None, "explanation": None, "wrong_streak": 0, "suggest_hint": False})
     return ok({
         "is_correct": is_correct,
         # 틀렸을 때는 해설(=정답)을 주지 않는다. 다시 풀거나 '해설 보기'를 고른다 (10/7 결정 A)
@@ -308,6 +356,8 @@ def reveal_explanation(request, progress_id):
         question = Question.objects.filter(id=question_id, lesson_id=progress.lesson_id).first()
     if question is None:
         return error("VALIDATION_ERROR", "이 레슨의 문제가 아니에요.", 400)
+    if is_diagnostic(progress.lesson):
+        return error("VALIDATION_ERROR", "진단에서는 해설을 볼 수 없어요.", 400)
     if not progress.attempts.filter(question=question).exists():
         return error("VALIDATION_ERROR", "먼저 답을 하나 골라 주세요.", 400)
 
@@ -387,6 +437,8 @@ def request_hint(request, question_id):
     question = Question.objects.filter(id=question_id, lesson_id=progress.lesson_id).select_related("lesson").first()
     if question is None:
         return error("NOT_FOUND", "이 레슨의 문제가 아니에요.", 404)
+    if is_diagnostic(question.lesson):
+        return error("VALIDATION_ERROR", "진단 중에는 사수 힌트를 쓸 수 없어요.", 400)
     if not is_number(level) or level not in (1, 2, 3):
         return error("VALIDATION_ERROR", "힌트 단계는 1~3이에요.", 400)
     if progress.completed_at is not None:
@@ -526,3 +578,14 @@ def lesson_records(request):
         "remaining": remaining,
         "estimate": estimate_finish(remaining, get_profile(request.user).weekly_goal_days),
     })
+
+
+@require_POST
+@login_required_json
+def skip_pre_diagnostic(request):
+    """POST /api/v1/diagnostics/pre/skip : 사전 진단 건너뛰기. 건너뛴 사람은 베타 분석에서 뺀다"""
+    profile = get_profile(request.user)
+    if profile.pre_diag_skipped_at is None:
+        profile.pre_diag_skipped_at = timezone.now()
+        profile.save(update_fields=["pre_diag_skipped_at", "updated_at"])
+    return ok({"skipped": True})

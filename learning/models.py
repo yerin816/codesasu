@@ -189,9 +189,21 @@ class HintRequest(models.Model):
         ]
 
 
+def random_diag_order():
+    """사전·사후 진단 순서를 사람마다 무작위로 정한다. AB면 사전 A·사후 B (FR-15)"""
+    import secrets
+
+    return secrets.choice(["AB", "BA"])
+
+
 class Profile(models.Model):
     """사용자 설정 (WBS 5.1, FR-02). 처음 로그인하면 주간 목표를 고른다.
-    알림 시각(notify_time)은 5.2 알림에서 쓴다. 행은 처음 필요할 때 만든다(get_profile)."""
+    알림 시각(notify_time)은 5.2 알림에서 쓴다. 행은 처음 필요할 때 만든다(get_profile).
+    진단 순서(diag_order)는 A·B 세트 난이도 차이가 결과를 흔들지 않게 사람마다 반대로 배정한다 (FR-15)."""
+
+    class DiagOrder(models.TextChoices):
+        AB = "AB", "사전 A → 사후 B"
+        BA = "BA", "사전 B → 사후 A"
 
     class Goal(models.IntegerChoices):
         LIGHT = 3, "주 3일"
@@ -203,6 +215,8 @@ class Profile(models.Model):
     notify_time = models.TimeField(null=True, blank=True)
     timezone = models.CharField(max_length=50, default="Asia/Seoul")
     onboarded_at = models.DateTimeField(null=True, blank=True)  # 목표를 처음 고른 때. 비어 있으면 고르는 화면부터
+    diag_order = models.CharField(max_length=2, choices=DiagOrder.choices, default=random_diag_order)
+    pre_diag_skipped_at = models.DateTimeField(null=True, blank=True)  # 사전 진단을 건너뛴 때 (베타 분석에서 뺀다)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):

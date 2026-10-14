@@ -59,6 +59,7 @@ h2 { font-size: 18px; line-height: 1.45; margin: 4px 0 12px; }
 .eyebrow { color: var(--accent); font-weight: 700; font-size: 13px; margin: 0; }
 .muted { color: var(--muted); }
 .small { font-size: 14px; }
+.center { text-align: center; }
 .error { color: var(--bad); }
 
 .tag {
