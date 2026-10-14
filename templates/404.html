@@ -1,0 +1,16 @@
+{% extends "learning/base.html" %}
+{% comment %}
+  주소를 잘못 입력했거나 지워진 화면일 때 (DEBUG가 꺼진 배포 서버에서만 쓰인다).
+  Django 기본 404는 영어 한 줄이라, 코드사수 틀과 한국어로 바꾼다 (10/14)
+{% endcomment %}
+{% block title %}페이지를 찾을 수 없어요 · 코드사수{% endblock %}
+{% block page %}error{% endblock %}
+
+{% block content %}
+<section class="card">
+  <p class="eyebrow">404</p>
+  <h1>찾는 화면이 없어요</h1>
+  <p class="muted">주소가 바뀌었거나 잘못 입력된 것 같아요. 홈에서 오늘의 레슨을 이어서 풀 수 있어요.</p>
+  <a class="btn primary" href="{% url 'home' %}">홈으로</a>
+</section>
+{% endblock %}

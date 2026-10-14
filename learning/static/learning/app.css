@@ -50,7 +50,8 @@ a { color: var(--accent); }
 .page {
   max-width: 560px;
   margin: 0 auto;
-  padding: 20px 16px calc(var(--bar-h) + 32px + env(safe-area-inset-bottom));
+  /* --sasu-space: 사수 시트가 열려 있으면 그 높이만큼 더 내려가게 해, 가려진 선택지를 시트 위로 올려 볼 수 있다 */
+  padding: 20px 16px calc(var(--bar-h) + 32px + var(--sasu-space, 0px) + env(safe-area-inset-bottom));
 }
 
 h1 { font-size: 22px; line-height: 1.4; margin: 4px 0 16px; }
@@ -362,6 +363,13 @@ pre.code .ln {
   display: inline-flex; align-items: center; justify-content: center;
   font-weight: 800; font-size: 14px;
 }
+.sasu-head > strong, .sasu-avatar, .sasu-close { flex: none; white-space: nowrap; }
+.sasu-summary { display: none; flex: 1 1 auto; font-size: 13px; color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sasu.is-mini .sasu-summary { display: inline; }
+.sasu.is-mini #sasu-body { display: none; }
+.sasu.is-mini .sasu-head { padding-bottom: 12px; cursor: pointer; }
+#sasu-toggle { margin-left: auto; }
+#sasu-toggle + .sasu-close { margin-left: 0; }
 .sasu-close { margin-left: auto; border: 0; background: none; color: var(--muted); font: inherit; font-size: 14px; cursor: pointer; padding: 6px; }
 #sasu-body { overflow-y: auto; padding: 4px 16px 14px; }
 .sasu-item { margin: 0 0 10px; }

@@ -1,0 +1,24 @@
+{% load static %}<!doctype html>
+{% comment %}
+  서버 오류 화면. 오류가 난 상황에서도 확실히 보이도록 로그인 정보·주소 계산 없이 그린다
+  (Django는 500 화면에 요청 정보를 넘기지 않는다). 원인은 Cloud Run 로그에 남는다
+{% endcomment %}
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>잠시 문제가 생겼어요 · 코드사수</title>
+  <link rel="stylesheet" href="{% static 'learning/app.css' %}">
+</head>
+<body data-page="error">
+  <header class="topbar"><a class="brand" href="/">코드사수</a></header>
+  <main class="page">
+    <section class="card">
+      <p class="eyebrow">500</p>
+      <h1>잠시 문제가 생겼어요</h1>
+      <p class="muted">서버에서 오류가 났어요. 푼 기록은 저장돼 있으니 잠시 뒤 다시 열어 주세요.</p>
+      <a class="btn primary" href="/">홈으로</a>
+    </section>
+  </main>
+</body>
+</html>

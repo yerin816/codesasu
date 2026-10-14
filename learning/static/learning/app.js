@@ -418,6 +418,8 @@ function choiceButtons() {
 }
 
 function selectChoice(no) {
+  // 힌트를 읽고 답을 고르면 시트를 접어 선택지와 제출 버튼이 보이게 한다
+  if (!$("#sasu").hidden) setSasuMini(true);
   state.selected = no;
   choiceButtons().forEach((b) => b.setAttribute("aria-pressed", String(Number(b.dataset.no) === no)));
   const submit = $("#submit-btn");
@@ -509,10 +511,33 @@ async function revealExplanation() {
 function openSasu(html) {
   $("#sasu-body").innerHTML = html;
   $("#sasu").hidden = false;
+  setSasuMini(false);
 }
 
 function closeSasu() {
   $("#sasu").hidden = true;
+  updateSasuSpace();
+}
+
+/* 사수 시트 접기·펼치기. 접으면 머리 한 줄만 남는다 (10/14: 시트가 선택지를 가림) */
+function setSasuMini(mini) {
+  const sheet = $("#sasu");
+  sheet.classList.toggle("is-mini", mini);
+  const toggle = $("#sasu-toggle");
+  toggle.textContent = mini ? "펼치기" : "접기";
+  toggle.setAttribute("aria-expanded", String(!mini));
+  const n = state.hints.length;
+  $("#sasu-summary").textContent = n ? `힌트 ${n}단계까지 받았어요` : "할 말이 있어요";
+  updateSasuSpace();
+}
+
+/* 폰에서는 시트가 화면 아래를 덮으므로, 그 높이만큼 페이지 아래 여백을 늘려 선택지를 시트 위로 올릴 수 있게 한다.
+ * 넓은 PC(1340px~)는 시트가 본문 옆에 있어 필요 없다 */
+function updateSasuSpace() {
+  const sheet = $("#sasu");
+  const beside = window.matchMedia("(min-width: 1340px)").matches;
+  const h = !sheet || sheet.hidden || beside ? 0 : sheet.offsetHeight;
+  document.documentElement.style.setProperty("--sasu-space", `${h}px`);
 }
 
 /* 맞혔거나 해설을 봤으면 힌트는 끝 */
@@ -663,7 +688,16 @@ document.addEventListener("DOMContentLoaded", () => {
     $("#hint-btn").addEventListener("click", () => {
       if (state.hints.length) renderHints(null); else requestHint();
     });
-    $("#sasu-close").addEventListener("click", closeSasu);
+    $("#sasu-close").addEventListener("click", (e) => { e.stopPropagation(); closeSasu(); });
+    $("#sasu-toggle").addEventListener("click", (e) => {
+      e.stopPropagation();
+      setSasuMini(!$("#sasu").classList.contains("is-mini"));
+    });
+    $(".sasu-head").addEventListener("click", () => {
+      if ($("#sasu").classList.contains("is-mini")) setSasuMini(false);
+    });
+    if ("ResizeObserver" in window) new ResizeObserver(updateSasuSpace).observe($("#sasu"));
+    window.addEventListener("resize", updateSasuSpace);
     $("#q-code").addEventListener("scroll", markCodeScrollEnd, { passive: true });
     window.addEventListener("resize", fitCode);
     window.addEventListener("resize", fitSnippets);

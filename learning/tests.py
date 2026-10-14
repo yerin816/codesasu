@@ -1646,3 +1646,23 @@ class FunnelTests(ApiTestCase):
 
         with self.assertRaises(CommandError):
             self.run_funnel("--since", "11/9")
+
+
+class ErrorPageTests(TestCase):
+    """404·500 화면을 한국어와 코드사수 틀로 (10/14). 디버그 정보는 보이지 않는다"""
+
+    def test_404_is_korean_with_home_link(self):
+        res = self.client.get("/no-such-page/")
+        self.assertEqual(res.status_code, 404)
+        self.assertContains(res, "찾는 화면이 없어요", status_code=404)
+        self.assertContains(res, 'class="topbar"', status_code=404)
+        self.assertContains(res, 'href="/"', status_code=404)
+        self.assertNotContains(res, "Traceback", status_code=404)
+
+    def test_500_renders_without_request_context(self):
+        from django.test import RequestFactory
+        from django.views.defaults import server_error
+
+        res = server_error(RequestFactory().get("/"))
+        self.assertEqual(res.status_code, 500)
+        self.assertIn("잠시 문제가 생겼어요", res.content.decode())
