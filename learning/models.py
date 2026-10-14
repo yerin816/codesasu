@@ -187,3 +187,23 @@ class HintRequest(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["progress", "question", "level"], name="unique_hint_level"),
         ]
+
+
+class Profile(models.Model):
+    """사용자 설정 (WBS 5.1, FR-02). 처음 로그인하면 주간 목표를 고른다.
+    알림 시각(notify_time)은 5.2 알림에서 쓴다. 행은 처음 필요할 때 만든다(get_profile)."""
+
+    class Goal(models.IntegerChoices):
+        LIGHT = 3, "주 3일"
+        WEEKDAYS = 5, "주 5일"
+        DAILY = 7, "매일"
+
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="profile")
+    weekly_goal_days = models.PositiveSmallIntegerField(choices=Goal.choices, default=Goal.WEEKDAYS)
+    notify_time = models.TimeField(null=True, blank=True)
+    timezone = models.CharField(max_length=50, default="Asia/Seoul")
+    onboarded_at = models.DateTimeField(null=True, blank=True)  # 목표를 처음 고른 때. 비어 있으면 고르는 화면부터
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.user} - 주 {self.weekly_goal_days}일"

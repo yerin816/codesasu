@@ -15,7 +15,9 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.test import Client, SimpleTestCase, TestCase
 
-from .models import AnswerAttempt, ExplanationReveal, Lesson, LessonProgress
+from django.utils import timezone
+
+from .models import AnswerAttempt, ExplanationReveal, Lesson, LessonProgress, Profile
 
 # 샘플 레슨 정답: 문제1=2, 문제2=1 (레슨1) / 문제3=1, 문제4=2 (레슨2)
 ANSWERS = {1: 2, 2: 1, 3: 1, 4: 2}
@@ -1304,3 +1306,142 @@ class PolicyPageTests(TestCase):
         self.assertContains(home, 'href="/privacy/"')
         self.assertContains(home, 'href="/terms/"')
         self.assertNotContains(self.client.get("/lessons/1/"), 'class="site-footer"')
+
+
+class WeeklyGoalAndRecordsTests(ApiTestCase):
+    """5.1 주간 목표(FR-02)·이번 주 진행(FR-11)·학습 기록과 예상 완료일(FR-12)"""
+
+    def setUp(self):
+        self.user = self.make_user()
+        self.client.force_login(self.user)
+
+    def patch_me(self, data, client=None):
+        client = client or self.client
+        return client.patch("/api/v1/me", json.dumps(data), content_type="application/json")
+
+    def done_at(self, lesson_id, when, correct=2):
+        p = LessonProgress.objects.create(user=self.user, lesson_id=lesson_id)
+        LessonProgress.objects.filter(id=p.id).update(completed_at=when, correct_count=correct)
+
+    def test_first_login_needs_goal_then_goal_is_used(self):
+        body = self.client.get("/api/v1/today").json()
+        self.assertTrue(body["needs_onboarding"])
+        self.assertEqual(body["week"]["goal_days"], 5)  # 고르기 전 기본값
+
+        res = self.patch_me({"weekly_goal_days": 3})
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertEqual(res.json()["weekly_goal_days"], 3)
+        self.assertTrue(res.json()["onboarded"])
+
+        body = self.client.get("/api/v1/today").json()
+        self.assertFalse(body["needs_onboarding"])
+        self.assertEqual(body["week"], {"done_days": 0, "goal_days": 3})
+        _, done = self.solve_all(1)
+        self.assertEqual(done["week"], {"done_days": 1, "goal_days": 3})
+
+    def test_goal_can_change_later_without_resetting_onboarding(self):
+        self.patch_me({"weekly_goal_days": 3})
+        first = Profile.objects.get(user=self.user).onboarded_at
+        self.assertEqual(self.patch_me({"weekly_goal_days": 7}).json()["weekly_goal_days"], 7)
+        self.assertEqual(Profile.objects.get(user=self.user).onboarded_at, first)
+        self.assertEqual(self.client.get("/api/v1/me").json()["weekly_goal_days"], 7)
+
+    def test_goal_validation(self):
+        for bad in [4, 0, "5", True, None]:
+            res = self.patch_me({"weekly_goal_days": bad})
+            self.assertEqual(res.status_code, 400, bad)
+        self.assertEqual(self.patch_me({"weekly_goal_days": 5, "is_staff": True}).status_code, 400)
+        self.assertFalse(get_user_model().objects.get(id=self.user.id).is_staff)
+        self.assertIsNone(Profile.objects.get(user=self.user).onboarded_at)
+
+    def test_guest_gets_401_and_no_onboarding(self):
+        guest = Client()
+        for url in ["/api/v1/me", "/api/v1/progress/weekly", "/api/v1/progress/lessons"]:
+            self.assertEqual(guest.get(url).status_code, 401, url)
+        self.assertEqual(self.patch_me({"weekly_goal_days": 3}, client=guest).status_code, 401)
+        self.assertFalse(guest.get("/api/v1/today").json()["needs_onboarding"])
+
+    def test_patch_needs_csrf_token(self):
+        strict = Client(enforce_csrf_checks=True)
+        strict.force_login(self.user)
+        self.assertEqual(self.patch_me({"weekly_goal_days": 3}, client=strict).status_code, 403)
+
+    def test_weekly_counts_last_four_weeks_by_korean_date(self):
+        self.patch_me({"weekly_goal_days": 3})
+        utc = dt_timezone.utc
+        # 지금: 한국 10/14(수) 15:00. 이번 주 월요일 = 10/12
+        now = datetime(2026, 10, 14, 6, 0, tzinfo=utc)
+        self.done_at(1, datetime(2026, 10, 12, 1, 0, tzinfo=utc))   # 이번 주 월
+        self.done_at(2, datetime(2026, 10, 12, 2, 0, tzinfo=utc))   # 같은 날 → 1일
+        self.done_at(1, datetime(2026, 10, 11, 16, 0, tzinfo=utc))  # 한국 10/12(월) 01:00 → 이번 주
+        self.done_at(1, datetime(2026, 10, 5, 1, 0, tzinfo=utc))    # 지난주 3일
+        self.done_at(1, datetime(2026, 10, 7, 1, 0, tzinfo=utc))
+        self.done_at(2, datetime(2026, 10, 9, 1, 0, tzinfo=utc))
+        self.done_at(1, datetime(2026, 9, 1, 1, 0, tzinfo=utc))     # 4주보다 전 → 안 셈
+        with mock.patch("django.utils.timezone.now", return_value=now):
+            weeks = self.client.get("/api/v1/progress/weekly?weeks=4").json()["weeks"]
+        self.assertEqual([w["week_start"] for w in weeks], ["2026-10-12", "2026-10-05", "2026-09-28", "2026-09-21"])
+        self.assertEqual([w["done_days"] for w in weeks], [1, 3, 0, 0])
+        self.assertEqual([w["achieved"] for w in weeks], [False, True, False, False])
+        self.assertTrue(all(w["goal_days"] == 3 for w in weeks))
+
+    def test_weekly_validates_weeks(self):
+        for bad in ["0", "13", "abc"]:
+            self.assertEqual(self.client.get(f"/api/v1/progress/weekly?weeks={bad}").status_code, 400, bad)
+
+    def test_lesson_records_latest_only_and_estimate(self):
+        utc = dt_timezone.utc
+        now = datetime(2026, 10, 14, 6, 0, tzinfo=utc)  # 한국 10/14
+        self.done_at(1, datetime(2026, 10, 12, 1, 0, tzinfo=utc), correct=1)
+        self.done_at(1, datetime(2026, 10, 13, 15, 30, tzinfo=utc), correct=2)  # 다시 풂: 한국 10/14 00:30
+        LessonProgress.objects.create(user=self.user, lesson_id=2)  # 시작만 하고 안 끝냄
+        with mock.patch("django.utils.timezone.now", return_value=now):
+            body = self.client.get("/api/v1/progress/lessons").json()
+        self.assertEqual(body["total"], 2)
+        self.assertEqual(body["remaining"], 1)
+        self.assertEqual(len(body["lessons"]), 1)
+        rec = body["lessons"][0]
+        self.assertEqual((rec["id"], rec["correct_count"], rec["question_count"]), (1, 2, 2))
+        self.assertTrue(rec["completed_at"].startswith("2026-10-14T00:30"))  # 한국 시간으로
+        # 남은 1개 ÷ 주 5일 → 7/5일 올림 = 2일 뒤
+        self.assertEqual(body["estimate"], {"days": 2, "date": "2026-10-16"})
+
+        self.patch_me({"weekly_goal_days": 3})
+        with mock.patch("django.utils.timezone.now", return_value=now):
+            self.assertEqual(self.client.get("/api/v1/progress/lessons").json()["estimate"]["days"], 3)
+
+    def test_estimate_none_when_all_done_and_math(self):
+        from .views import estimate_finish
+
+        self.assertIsNone(estimate_finish(0, 5))
+        self.assertEqual(estimate_finish(14, 7)["days"], 14)
+        self.assertEqual(estimate_finish(14, 5)["days"], 20)  # 14×7÷5 = 19.6 → 20
+        self.assertEqual(estimate_finish(14, 3)["days"], 33)  # 32.67 → 33
+        self.solve_all(1)
+        self.solve_all(2)
+        body = self.client.get("/api/v1/progress/lessons").json()
+        self.assertEqual((body["remaining"], body["estimate"]), (0, None))
+
+    def test_records_exclude_drafts_and_diagnostics(self):
+        lesson = Lesson.objects.get(id=1)
+        draft = Lesson.objects.create(course=lesson.course, order_no=50, track="reading",
+                                      title="초안", body_md="본문", is_published=False)
+        diag = Lesson.objects.create(course=lesson.course, order_no=101, kind="diagnostic", track="reading",
+                                     title="진단 A", body_md="본문", is_published=True)
+        now = timezone.now()
+        self.done_at(draft.id, now)
+        self.done_at(diag.id, now)
+        body = self.client.get("/api/v1/progress/lessons").json()
+        self.assertEqual((body["total"], body["lessons"]), (2, []))
+        # 진단은 공부한 날로 세고, 초안 미리보기는 세지 않는다
+        self.assertEqual(self.client.get("/api/v1/today").json()["week"]["done_days"], 1)
+
+    def test_records_page_requires_login_and_links_exist(self):
+        res = Client().get("/records/")
+        self.assertEqual(res.status_code, 302)
+        self.assertIn("/accounts/login/", res["Location"])
+        res = self.client.get("/records/")
+        self.assertEqual(res.status_code, 200)
+        self.assertContains(res, 'data-page="records"')
+        self.assertIn("csrftoken", res.cookies)
+        self.assertContains(self.client.get("/"), 'href="/records/"')  # 상단 '기록' 링크

@@ -38,8 +38,8 @@ function csrfToken() {
 }
 
 /* API 호출. 실패해도 예외 대신 {ok:false, message}를 돌려줘 화면이 멈추지 않게 한다 */
-async function api(path, body) {
-  const options = { method: body === undefined ? "GET" : "POST", credentials: "same-origin", headers: {} };
+async function api(path, body, method) {
+  const options = { method: method || (body === undefined ? "GET" : "POST"), credentials: "same-origin", headers: {} };
   if (body !== undefined) {
     options.headers["Content-Type"] = "application/json";
     options.headers["X-CSRFToken"] = csrfToken();
@@ -66,6 +66,41 @@ function weekHtml(week) {
     <div class="dots" aria-hidden="true">${dots}</div>`;
 }
 
+/* 주간 목표 고르기 (FR-02). 처음 로그인한 홈과 학습 기록 화면에서 같이 쓴다 */
+const GOALS = [
+  { days: 3, label: "주 3일", note: "가볍게" },
+  { days: 5, label: "주 5일", note: "평일마다" },
+  { days: 7, label: "매일", note: "습관 만들기" },
+];
+
+function goalPickerHtml(current) {
+  return `<div class="goal-picker" role="group" aria-label="주간 목표">${GOALS.map((g) =>
+    `<button type="button" class="goal-opt" data-days="${g.days}" aria-pressed="${g.days === current}">
+      <strong>${g.label}</strong><span>${g.note}</span></button>`).join("")}</div>`;
+}
+
+/* 버튼을 누르면 저장하고 onSaved(설정)를 부른다. 실패하면 msgEl에 안내 */
+function bindGoalPicker(root, msgEl, onSaved) {
+  root.querySelectorAll(".goal-opt").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (root.dataset.busy) return;
+      root.dataset.busy = "1";
+      const res = await api("me", { weekly_goal_days: Number(btn.dataset.days) }, "PATCH");
+      delete root.dataset.busy;
+      if (!res.ok) {
+        msgEl.innerHTML = `<p class="error small">${esc(res.message)}</p>`;
+        return;
+      }
+      onSaved(res.data);
+    });
+  });
+}
+
+function shortDate(iso) {
+  const [, m, d] = String(iso).slice(0, 10).split("-").map(Number);
+  return `${m}월 ${d}일`;
+}
+
 function minutesText(sec) {
   const m = Math.floor(sec / 60);
   const s = sec % 60;
@@ -81,7 +116,19 @@ async function initHome() {
     box.innerHTML = `<p class="error">${esc(res.message)}</p>`;
     return;
   }
-  const { lesson, week, is_guest } = res.data;
+  const { lesson, week, is_guest, needs_onboarding } = res.data;
+
+  if (needs_onboarding) {
+    // 처음 로그인: 레슨보다 주간 목표를 먼저 고른다 (FR-02)
+    box.innerHTML = `<p class="eyebrow">시작하기 전에</p>
+      <h2>일주일에 며칠 풀어 볼까요?</h2>
+      <p class="muted small">하루에 레슨 1개, 10분 정도예요. 목표는 학습 기록 화면에서 언제든 바꿀 수 있어요.</p>
+      ${goalPickerHtml(null)}
+      <div id="goal-msg"></div>`;
+    bindGoalPicker(box, $("#goal-msg"), () => initHome());
+    $("#week").hidden = true;
+    return;
+  }
 
   if (!lesson) {
     box.innerHTML = `<h2>준비된 레슨을 모두 끝냈어요</h2>
@@ -95,9 +142,74 @@ async function initHome() {
 
   if (week) {
     const weekBox = $("#week");
-    weekBox.innerHTML = weekHtml(week);
+    weekBox.innerHTML = `${weekHtml(week)}<a class="more-link" href="/records/">학습 기록 보기</a>`;
     weekBox.hidden = false;
   }
+}
+
+/* ---------------- 학습 기록 (FR-12) ---------------- */
+
+async function initRecords() {
+  const finish = $("#finish");
+  const [lessonsRes, weeksRes, meRes] = await Promise.all([
+    api("progress/lessons"), api("progress/weekly?weeks=4"), api("me"),
+  ]);
+  if (!lessonsRes.ok || !weeksRes.ok || !meRes.ok) {
+    const failed = [lessonsRes, weeksRes, meRes].find((r) => !r.ok);
+    finish.innerHTML = `<p class="error">${esc(failed.message)}</p>`;
+    return;
+  }
+  const rec = lessonsRes.data;
+  const done = rec.total - rec.remaining;
+  const pct = rec.total ? Math.round((done / rec.total) * 100) : 0;
+
+  // 1) 예상 완료일: 남은 레슨 ÷ 주간 목표
+  let eta;
+  if (!rec.estimate) {
+    eta = `<h2>레슨 ${esc(rec.total)}개를 모두 끝냈어요</h2>`;
+  } else {
+    const days = rec.estimate.days;
+    const when = days >= 14 ? `약 ${Math.round(days / 7)}주 뒤` : `약 ${days}일 뒤`;
+    eta = `<h2>${esc(shortDate(rec.estimate.date))} 무렵 끝나요</h2>
+      <p class="muted small">남은 레슨 ${esc(rec.remaining)}개 · 주 ${esc(meRes.data.weekly_goal_days)}일씩 풀면 ${esc(when)}</p>`;
+  }
+  finish.innerHTML = `<p class="eyebrow">예상 완료일</p>${eta}
+    <div class="bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"
+      aria-label="끝낸 레슨 ${done}개 / ${rec.total}개"><span style="width:${pct}%"></span></div>
+    <p class="muted small">끝낸 레슨 ${esc(done)} / ${esc(rec.total)}개</p>`;
+
+  // 2) 최근 4주: 이번 주가 맨 위. 연속 기록은 보여주지 않는다 (FR-11)
+  const weeksBox = $("#weeks");
+  weeksBox.innerHTML = `<p class="eyebrow">최근 4주</p>
+    <ul class="week-list">${weeksRes.data.weeks.map((w, i) => {
+      let dots = "";
+      for (let k = 0; k < w.goal_days; k++) dots += `<span class="dot${k < w.done_days ? " on" : ""}"></span>`;
+      return `<li>
+        <span class="wk">${i === 0 ? "이번 주" : `${esc(shortDate(w.week_start))} 주`}</span>
+        <span class="dots mini" aria-hidden="true">${dots}</span>
+        <span class="wk-count">${esc(w.done_days)}/${esc(w.goal_days)}일${w.achieved ? ' <b class="ok">달성</b>' : ""}</span>
+      </li>`;
+    }).join("")}</ul>`;
+  weeksBox.hidden = false;
+
+  // 3) 주간 목표 바꾸기
+  const goalBox = $("#goal");
+  goalBox.innerHTML = `<p class="eyebrow">주간 목표</p>
+    ${goalPickerHtml(meRes.data.weekly_goal_days)}<div id="goal-msg"></div>`;
+  bindGoalPicker(goalBox, $("#goal-msg"), () => initRecords());
+  goalBox.hidden = false;
+
+  // 4) 끝낸 레슨 (같은 레슨을 다시 풀었으면 최근 기록)
+  const listBox = $("#done-lessons");
+  listBox.innerHTML = `<p class="eyebrow">끝낸 레슨</p>${rec.lessons.length
+    ? `<ul class="lesson-list">${rec.lessons.map((l) => `<li>
+        <a href="/lessons/${encodeURIComponent(l.id)}/">
+          <span class="ln-no">L${esc(String(l.order_no).padStart(2, "0"))}</span>
+          <span class="ln-title">${esc(l.title)}</span>
+          <span class="ln-meta">${esc(TRACK[l.track] || "")} · 처음에 맞힘 ${esc(l.correct_count)}/${esc(l.question_count)} · ${esc(shortDate(l.completed_at.slice(0, 10)))}</span>
+        </a></li>`).join("")}</ul>`
+    : '<p class="muted small">아직 끝낸 레슨이 없어요. 홈에서 오늘의 레슨을 시작해 보세요.</p>'}`;
+  listBox.hidden = false;
 }
 
 /* ---------------- 레슨 풀이 ---------------- */
@@ -484,6 +596,7 @@ async function finishLesson() {
 document.addEventListener("DOMContentLoaded", () => {
   const page = document.body.dataset.page;
   if (page === "home") initHome();
+  if (page === "records") initRecords();
   if (page === "lesson") {
     initLesson();
     $("#hint-btn").addEventListener("click", () => {

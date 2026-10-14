@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.urls import reverse
 from django.utils.html import format_html
 
-from .models import AnswerAttempt, Course, ExplanationReveal, HintRequest, Lesson, LessonProgress, Question
+from .models import AnswerAttempt, Course, ExplanationReveal, HintRequest, Lesson, LessonProgress, Profile, Question
 
 
 # 과정·레슨·문제 내용은 lessons/ 폴더의 파일이 원본이다 (sync_lessons가 서버 시작 때 반영).
@@ -70,3 +70,15 @@ class ExplanationRevealAdmin(admin.ModelAdmin):
 class HintRequestAdmin(admin.ModelAdmin):
     list_display = ["question", "level", "blocked", "model", "tokens_in", "tokens_out", "created_at"]
     list_filter = ["blocked", "level", "model"]
+
+
+@admin.register(Profile)
+class ProfileAdmin(admin.ModelAdmin):
+    """주간 목표 분포를 보는 용도 (베타 분석). 값은 사용자가 화면에서 바꾼다"""
+
+    list_display = ["user", "weekly_goal_days", "onboarded_at", "updated_at"]
+    list_filter = ["weekly_goal_days"]
+    readonly_fields = ["user", "weekly_goal_days", "notify_time", "timezone", "onboarded_at", "updated_at"]
+
+    def has_add_permission(self, request):
+        return False

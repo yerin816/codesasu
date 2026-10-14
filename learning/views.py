@@ -7,22 +7,24 @@
 
 import json
 import logging
+import math
 import secrets
 from datetime import timedelta
 
 from django.db import IntegrityError
+from django.db.models import Count
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import ensure_csrf_cookie
-from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from .embeddings import EmbeddingError
 from .hints import DAILY_LIMIT, LLMError, generate_hint
-from .models import AnswerAttempt, ExplanationReveal, HintRequest, Lesson, LessonProgress, Question
+from .models import AnswerAttempt, ExplanationReveal, HintRequest, Lesson, LessonProgress, Profile, Question
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_WEEKLY_GOAL_DAYS = 5  # 5.1에서 사용자가 고른 주간 목표(profile)로 바꾼다
+RECORD_WEEKS_MAX = 12  # 주별 기록은 최대 12주까지 (화면은 4주)
 HINT_SUGGEST_STREAK = 2  # 같은 문제를 연속 2번 틀리면 사수가 힌트를 제안한다 (FR-09)
 
 
@@ -104,22 +106,44 @@ def owns(request, progress):
     return progress.user_id is None and progress.guest_key == request.session.get("guest_key")
 
 
-def week_summary(user):
-    """이번 주(월요일 시작, 한국 시간) 레슨을 끝낸 날 수. 하루에 여러 개 끝내도 1일 (FR-11)."""
+def get_profile(user):
+    """사용자 설정. 처음 필요할 때 기본값(주 5일)으로 만든다"""
+    profile, _ = Profile.objects.get_or_create(user=user)
+    return profile
+
+
+def this_monday():
     today = timezone.localdate()
-    monday = today - timedelta(days=today.weekday())
-    # 관리자가 공개 전 초안을 미리 푼 기록은 주간 목표에 넣지 않는다
+    return today - timedelta(days=today.weekday())
+
+
+def study_dates(user, since):
+    """since(날짜)부터 레슨을 끝낸 날짜들(한국 시간). 하루에 여러 개 끝내도 1일 (FR-11).
+    관리자가 공개 전 초안을 미리 푼 기록은 넣지 않는다"""
     completed = LessonProgress.objects.filter(
-        user=user, completed_at__date__gte=monday,
+        user=user, completed_at__date__gte=since,
         lesson__is_published=True, lesson__course__is_published=True,
     ).values_list("completed_at", flat=True)
-    done_days = {timezone.localtime(t).date() for t in completed}
-    return {"done_days": len(done_days), "goal_days": DEFAULT_WEEKLY_GOAL_DAYS}
+    return {timezone.localtime(t).date() for t in completed}
+
+
+def week_summary(user):
+    """이번 주(월요일 시작, 한국 시간) 레슨을 끝낸 날 수와 내가 고른 주간 목표"""
+    return {"done_days": len(study_dates(user, this_monday())), "goal_days": get_profile(user).weekly_goal_days}
+
+
+def estimate_finish(remaining, goal_days):
+    """예상 완료일 (FR-12): 남은 레슨 수 ÷ 주간 목표. 하루에 레슨 1개, 주 goal_days일 푼다고 보고 계산한 대략값"""
+    if remaining == 0:
+        return None
+    days = math.ceil(remaining * 7 / goal_days)
+    return {"days": days, "date": (timezone.localdate() + timedelta(days=days)).isoformat()}
 
 
 def lesson_brief(lesson):
     return {
         "id": lesson.id,
+        "order_no": lesson.order_no,
         "title": lesson.title,
         "track": lesson.track,
         "est_minutes": lesson.est_minutes,
@@ -149,7 +173,8 @@ def today(request):
     return ok({
         "lesson": lesson_brief(lesson) if lesson else None,
         "week": week_summary(request.user),
-        "needs_onboarding": False,  # 5.1(profile) 전까지는 항상 False
+        # 처음 로그인하면 홈에서 주간 목표부터 고른다 (FR-02)
+        "needs_onboarding": get_profile(request.user).onboarded_at is None,
         "is_guest": False,
     })
 
@@ -396,3 +421,103 @@ def request_hint(request, question_id):
     except IntegrityError:  # 버튼을 빠르게 두 번 눌러 같은 단계가 동시에 만들어진 경우
         hint = progress.hints.get(question=question, level=level)
     return ok(hint_payload(hint, hints_used_today(progress)), status=201)
+
+
+# ---------- 내 설정·학습 기록 (WBS 5.1) ----------
+
+def login_required_json(view):
+    """로그인이 필요한 API. 로그인 화면으로 보내지 않고 401 JSON으로 답한다"""
+    def wrapped(request, *args, **kwargs):
+        if not request.user.is_authenticated:
+            return error("NOT_AUTHENTICATED", "로그인이 필요해요.", 401)
+        return view(request, *args, **kwargs)
+    wrapped.__name__ = view.__name__
+    wrapped.__doc__ = view.__doc__
+    return wrapped
+
+
+def profile_payload(profile):
+    return {
+        "weekly_goal_days": profile.weekly_goal_days,
+        "notify_time": profile.notify_time.strftime("%H:%M") if profile.notify_time else None,
+        "timezone": profile.timezone,
+        "onboarded": profile.onboarded_at is not None,
+    }
+
+
+@require_http_methods(["GET", "PATCH"])
+@login_required_json
+def me(request):
+    """GET/PATCH /api/v1/me : 내 설정. 지금은 주간 목표(3·5·7일)만 바꿀 수 있다 (FR-02)
+    알림 시각은 5.2 알림에서 연다"""
+    profile = get_profile(request.user)
+    if request.method == "PATCH":
+        data = read_json(request)
+        if data is None:
+            return error("VALIDATION_ERROR", "요청 형식이 올바르지 않아요.", 400)
+        unknown = set(data) - {"weekly_goal_days"}
+        if unknown:
+            return error("VALIDATION_ERROR", f"바꿀 수 없는 항목이에요: {', '.join(sorted(unknown))}", 400)
+        goal = data.get("weekly_goal_days")
+        if not is_number(goal) or goal not in Profile.Goal.values:
+            return error("VALIDATION_ERROR", "주간 목표는 3, 5, 7일 중에서 골라 주세요.", 400)
+        profile.weekly_goal_days = goal
+        if profile.onboarded_at is None:
+            profile.onboarded_at = timezone.now()
+        profile.save()
+    return ok(profile_payload(profile))
+
+
+@require_GET
+@login_required_json
+def weekly_progress(request):
+    """GET /api/v1/progress/weekly?weeks=4 : 최근 몇 주의 주별 달성 (FR-12). 이번 주가 맨 앞.
+    지난주들도 지금의 목표로 비교한다 (목표를 바꾼 이력은 저장하지 않는다)"""
+    try:
+        weeks = int(request.GET.get("weeks", 4))
+    except ValueError:
+        return error("VALIDATION_ERROR", "weeks는 숫자여야 해요.", 400)
+    if not 1 <= weeks <= RECORD_WEEKS_MAX:
+        return error("VALIDATION_ERROR", f"weeks는 1~{RECORD_WEEKS_MAX} 사이여야 해요.", 400)
+
+    goal = get_profile(request.user).weekly_goal_days
+    monday = this_monday()
+    first = monday - timedelta(weeks=weeks - 1)
+    dates = study_dates(request.user, first)
+    result = []
+    for i in range(weeks):
+        start = monday - timedelta(weeks=i)
+        done = sum(1 for d in dates if start <= d < start + timedelta(days=7))
+        result.append({"week_start": start.isoformat(), "done_days": done, "goal_days": goal,
+                       "achieved": done >= goal})
+    return ok({"weeks": result})
+
+
+@require_GET
+@login_required_json
+def lesson_records(request):
+    """GET /api/v1/progress/lessons : 끝낸 레슨 목록과 예상 완료일 (FR-12)
+    같은 레슨을 다시 풀었으면 가장 최근 기록 하나만 보여 준다. 진단과 공개 전 초안은 뺀다"""
+    lessons = list(published_lessons().annotate(question_count=Count("questions")))
+    latest = {}
+    for p in (LessonProgress.objects.filter(user=request.user, completed_at__isnull=False,
+                                            lesson__in=lessons)
+              .order_by("completed_at")):
+        latest[p.lesson_id] = p  # 시간순으로 덮어써서 마지막(최근) 것이 남는다
+
+    records = [
+        {
+            **lesson_brief(lesson),
+            "completed_at": timezone.localtime(latest[lesson.id].completed_at).isoformat(),  # 한국 시간
+            "correct_count": latest[lesson.id].correct_count,
+            "question_count": lesson.question_count,
+        }
+        for lesson in lessons if lesson.id in latest
+    ]
+    remaining = len(lessons) - len(records)
+    return ok({
+        "lessons": records,
+        "total": len(lessons),
+        "remaining": remaining,
+        "estimate": estimate_finish(remaining, get_profile(request.user).weekly_goal_days),
+    })

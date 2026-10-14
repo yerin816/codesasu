@@ -1,0 +1,21 @@
+{% extends "learning/base.html" %}
+{% block title %}학습 기록 · 코드사수{% endblock %}
+{% block page %}records{% endblock %}
+
+{% block content %}
+<section class="hello">
+  <p class="eyebrow">지금까지 읽은 코드</p>
+  <h1>학습 기록</h1>
+</section>
+
+<!-- 아래 내용은 app.js가 /api/v1/progress/lessons, /progress/weekly, /me 를 불러와 채운다 -->
+<section id="finish" class="card" aria-live="polite">
+  <p class="muted">불러오는 중…</p>
+</section>
+
+<section id="weeks" class="card" hidden></section>
+
+<section id="goal" class="card" hidden></section>
+
+<section id="done-lessons" class="card" hidden></section>
+{% endblock %}
