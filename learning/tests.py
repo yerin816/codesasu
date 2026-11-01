@@ -1945,6 +1945,54 @@ class EmailTests(TestCase):
         self.assertIn("/accounts/confirm-email/", mail.outbox[0].body)
         self.assertEqual(self.client.get("/api/v1/today").json()["is_guest"], False)  # 확인 전에도 로그인 상태
 
+    def test_reset_pages_in_codesasu_tone_end_to_end(self):
+        """비밀번호 찾기 → 메일 링크 → 새 비밀번호 → 로그인까지 화면 문구가 코드사수 말투"""
+        import re
+
+        from django.core import mail
+
+        self.make_user()
+        page = self.client.get("/accounts/password/reset/").content.decode()
+        self.assertIn("비밀번호 찾기", page)
+        self.assertIn("링크 받기", page)
+        self.assertNotIn("당신의", page)  # allauth 기본 번역이 남지 않게
+
+        res = self.client.post("/accounts/password/reset/", {"email": "mail@example.com"}, follow=True)
+        self.assertContains(res, "메일을 보냈어요")
+
+        link = re.search(r"https?://[^/]+(/accounts/password/reset/key/\S+/)", mail.outbox[0].body).group(1)
+        res = self.client.get(link, follow=True)  # 토큰을 세션에 옮기고 같은 화면의 다른 주소로 보낸다
+        self.assertContains(res, "새 비밀번호 정하기")
+        form_url = res.redirect_chain[-1][0] if res.redirect_chain else link
+        new = "brand-new-pass-4321!"
+        res = self.client.post(form_url, {"password1": new, "password2": new}, follow=True)
+        self.assertContains(res, "비밀번호를 바꿨어요")
+        self.assertNotContains(res, "성공적으로")  # 제목과 겹치는 allauth 기본 알림은 띄우지 않는다
+        self.assertTrue(get_user_model().objects.get(email="mail@example.com").check_password(new))
+
+        # 같은 링크는 다시 못 쓴다
+        res = self.client.get(link, follow=True)
+        self.assertContains(res, "링크를 쓸 수 없어요")
+
+    def test_confirm_email_page_in_codesasu_tone(self):
+        import re
+
+        from django.core import mail
+
+        res = self.client.post("/accounts/signup/", {
+            "email": "new@example.com", "password1": "a-long-pass-9876!", "password2": "a-long-pass-9876!",
+        }, follow=True)
+        shown = [str(m) for m in res.context["messages"]]
+        self.assertIn("new@example.com 주소로 확인 메일을 보냈어요. 확인하지 않아도 바로 쓸 수 있어요.", shown)
+        link = re.search(r"https?://[^/]+(/accounts/confirm-email/\S+/)", mail.outbox[0].body).group(1)
+        res = self.client.get(link)
+        self.assertContains(res, "맞아요, 확인할게요")
+        res = self.client.post(link, follow=True)
+        self.assertIn("이메일 확인을 마쳤어요.", [str(m) for m in res.context["messages"]])
+        from allauth.account.models import EmailAddress
+        self.assertTrue(EmailAddress.objects.get(email="new@example.com").verified)
+        self.assertContains(self.client.get("/accounts/confirm-email/wrong-key/"), "너무 오래된 링크")
+
 
 class EmailSettingsTests(SimpleTestCase):
     """앱 비밀번호가 있을 때만 실제 메일 서버(Gmail)를 쓴다"""

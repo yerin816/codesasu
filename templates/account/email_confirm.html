@@ -1,0 +1,27 @@
+{% extends "account/base_entrance.html" %}
+{% load allauth %}
+{% comment %}가입 확인 메일의 링크로 들어오는 화면 (WBS 6.6){% endcomment %}
+{% block head_title %}이메일 확인{% endblock head_title %}
+{% block content %}
+    <h1>이메일 확인</h1>
+    {% if confirmation %}
+        {% if can_confirm %}
+            <p><b>{{ confirmation.email_address.email }}</b> 주소로 가입한 게 맞다면 아래 버튼을 눌러 주세요.</p>
+            {% url 'account_confirm_email' confirmation.key as action_url %}
+            {% element form method="post" action=action_url %}
+                {% slot actions %}
+                    {% csrf_token %}
+                    {{ redirect_field }}
+                    {% element button type="submit" %}
+                        맞아요, 확인할게요
+                    {% endelement %}
+                {% endslot %}
+            {% endelement %}
+        {% else %}
+            <p>{{ email }} 주소는 이미 다른 계정에서 확인을 마쳤어요.</p>
+        {% endif %}
+    {% else %}
+        <p>이미 쓴 링크이거나 너무 오래된 링크예요. 확인하지 않아도 코드사수는 그대로 쓸 수 있어요.</p>
+        <ul><li><a href="/">홈으로 가기</a></li></ul>
+    {% endif %}
+{% endblock content %}
