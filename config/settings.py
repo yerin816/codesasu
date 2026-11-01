@@ -171,7 +171,9 @@ AUTHENTICATION_BACKENDS = [
 
 ACCOUNT_LOGIN_METHODS = {"email"}
 ACCOUNT_SIGNUP_FIELDS = ["email*", "password1*", "password2*"]
-ACCOUNT_EMAIL_VERIFICATION = "none"  # 개발 중에는 인증 메일 없이 진행. 배포 전에 다시 정한다
+# 가입하면 확인 메일을 보내지만, 확인 전에도 바로 쓸 수 있다 (11/1: 메일 발송 연결과 함께 none → optional)
+ACCOUNT_EMAIL_VERIFICATION = "optional"
+ACCOUNT_EMAIL_SUBJECT_PREFIX = "[코드사수] "
 
 SOCIALACCOUNT_PROVIDERS = {
     "google": {
@@ -189,7 +191,22 @@ SOCIALACCOUNT_PROVIDERS = {
 
 LOGIN_REDIRECT_URL = "/"
 ACCOUNT_LOGOUT_REDIRECT_URL = "/"
-EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+
+# ── 메일 (WBS 6.6): 비밀번호 찾기·가입 확인 메일 ──────────
+# EMAIL_HOST_PASSWORD(구글 '앱 비밀번호')가 있으면 Gmail로 실제 보내고, 없으면 서버 로그에만 찍는다(PC 개발·테스트).
+# 보내는 사람은 개인정보처리방침에 공개한 문의 메일과 같은 주소다
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "ningyerin@gmail.com")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+if EMAIL_HOST_PASSWORD:
+    EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+    EMAIL_HOST = "smtp.gmail.com"
+    EMAIL_PORT = 587
+    EMAIL_USE_TLS = True
+    EMAIL_TIMEOUT = 10  # 메일 서버가 늦어도 화면이 오래 멈추지 않게
+else:
+    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+DEFAULT_FROM_EMAIL = f"코드사수 <{EMAIL_HOST_USER}>"
+SERVER_EMAIL = DEFAULT_FROM_EMAIL
 
 # ── 캐시: 로그인 시도 제한(allauth)이 횟수를 여기에 센다 ──────────
 # 서버 메모리가 아니라 DB에 둬야 gunicorn 작업자 여러 개·재시작 사이에서도 횟수가 이어진다.

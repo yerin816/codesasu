@@ -1,0 +1,7 @@
+{% load i18n %}{% autoescape off %}안녕하세요, 코드사수예요.
+
+{% block content %}{% endblock content %}
+
+하루 10분 코드 읽기, 코드사수
+https://{{ current_site.domain }}/
+{% endautoescape %}

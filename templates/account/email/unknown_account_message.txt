@@ -1,0 +1,4 @@
+{% extends "account/email/base_message.txt" %}
+{% block content %}{% autoescape off %}이 이메일 주소로 비밀번호 찾기 요청이 들어왔는데, 이 주소로 가입한 코드사수 계정이 없어요.
+
+구글 계정으로 가입했다면 로그인 화면에서 "Google"을 눌러 들어오면 돼요. 직접 요청하지 않았다면 이 메일은 무시해도 돼요.{% endautoescape %}{% endblock content %}

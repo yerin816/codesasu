@@ -644,7 +644,7 @@ class HintCheckCommandTests(TestCase):
 class DeploySettingsTests(SimpleTestCase):
     """배포(DEBUG=False)일 때 보안 설정이 켜지는지, 실제 settings.py를 새 파이썬으로 따로 읽어 확인한다"""
 
-    KEYS = ["DEBUG", "ALLOWED_HOSTS", "CSRF_TRUSTED_ORIGINS", "SECURE_SSL_REDIRECT", "SESSION_COOKIE_SECURE", "CSRF_COOKIE_SECURE",
+    KEYS = ["EMAIL_BACKEND", "DEFAULT_FROM_EMAIL", "EMAIL_HOST", "DEBUG", "ALLOWED_HOSTS", "CSRF_TRUSTED_ORIGINS", "SECURE_SSL_REDIRECT", "SESSION_COOKIE_SECURE", "CSRF_COOKIE_SECURE",
             "ALLAUTH_TRUSTED_PROXY_COUNT", "ADMIN_PATH"]
 
     def read_settings(self, **env):
@@ -1902,3 +1902,60 @@ class PushApiTests(ApiTestCase):
         self.assertContains(res, 'addEventListener("push"')
         self.assertContains(res, 'addEventListener("notificationclick"')
         self.assertContains(res, "/static/learning/icons/icon-192")
+
+
+
+class EmailTests(TestCase):
+    """6.6 비밀번호 찾기·가입 확인 메일 (한국어, 코드사수 이름으로)"""
+
+    def make_user(self, email="mail@example.com"):
+        return get_user_model().objects.create_user(username="mail", email=email, password="test-pass-1234!")
+
+    def test_password_reset_mail_is_korean_with_link(self):
+        from django.core import mail
+
+        self.make_user()
+        res = self.client.post("/accounts/password/reset/", {"email": "mail@example.com"})
+        self.assertEqual(res.status_code, 302)
+        self.assertEqual(len(mail.outbox), 1)
+        m = mail.outbox[0]
+        self.assertEqual(m.subject, "[코드사수] 비밀번호 다시 정하기")
+        self.assertIn("코드사수", m.from_email)
+        self.assertIn("/accounts/password/reset/key/", m.body)
+        self.assertIn("안녕하세요, 코드사수예요.", m.body)
+        self.assertNotIn("example.com!", m.body)  # 기본 문구 'Hello from <사이트>!'가 남지 않게
+        self.assertNotIn("username", m.body.lower())
+
+    def test_unknown_email_gets_guidance_not_error(self):
+        from django.core import mail
+
+        self.client.post("/accounts/password/reset/", {"email": "nobody@example.com"})
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn("가입한 코드사수 계정이 없어요", mail.outbox[0].body)
+
+    def test_signup_sends_confirmation_but_does_not_block(self):
+        from django.core import mail
+
+        res = self.client.post("/accounts/signup/", {
+            "email": "new@example.com", "password1": "a-long-pass-9876!", "password2": "a-long-pass-9876!",
+        })
+        self.assertEqual(res.status_code, 302)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].subject, "[코드사수] 이메일 주소를 확인해 주세요")
+        self.assertIn("/accounts/confirm-email/", mail.outbox[0].body)
+        self.assertEqual(self.client.get("/api/v1/today").json()["is_guest"], False)  # 확인 전에도 로그인 상태
+
+
+class EmailSettingsTests(SimpleTestCase):
+    """앱 비밀번호가 있을 때만 실제 메일 서버(Gmail)를 쓴다"""
+
+    def read(self, **env):
+        return DeploySettingsTests.read_settings(DeploySettingsTests(), **env)
+
+    def test_console_without_password_and_gmail_with_it(self):
+        s = self.read(EMAIL_HOST_PASSWORD="")
+        self.assertEqual(s["EMAIL_BACKEND"], "django.core.mail.backends.console.EmailBackend")
+        s = self.read(EMAIL_HOST_PASSWORD="abcd efgh ijkl mnop")
+        self.assertEqual(s["EMAIL_BACKEND"], "django.core.mail.backends.smtp.EmailBackend")
+        self.assertEqual(s["EMAIL_HOST"], "smtp.gmail.com")
+        self.assertTrue(s["DEFAULT_FROM_EMAIL"].startswith("코드사수 <"))
