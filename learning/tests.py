@@ -1300,6 +1300,7 @@ class PolicyPageTests(TestCase):
             self.assertEqual(res.status_code, 200, url)
             self.assertContains(res, word)
         self.assertContains(self.client.get("/privacy/"), "OpenAI")
+        self.assertContains(self.client.get("/privacy/"), "Sentry")  # 6.1 오류 알림도 밝힌다
 
     def test_home_links_to_policies_but_lesson_page_does_not(self):
         home = self.client.get("/")
@@ -2007,3 +2008,123 @@ class EmailSettingsTests(SimpleTestCase):
         self.assertEqual(s["EMAIL_BACKEND"], "django.core.mail.backends.smtp.EmailBackend")
         self.assertEqual(s["EMAIL_HOST"], "smtp.gmail.com")
         self.assertTrue(s["DEFAULT_FROM_EMAIL"].startswith("코드사수 <"))
+
+
+SENTRY_E2E = r'''
+import json, os, sys
+from unittest import mock
+import django
+os.environ["DJANGO_SETTINGS_MODULE"] = "config.test_settings"
+django.setup()
+from django.test.utils import setup_test_environment
+setup_test_environment()  # 시험용 주소(testserver) 허용
+import sentry_sdk
+from sentry_sdk.transport import Transport
+from config.sentry import init_sentry
+
+sent = []
+class Capture(Transport):
+    def capture_envelope(self, envelope):
+        for item in envelope.items:
+            if item.type == "event":
+                sent.append(item.payload.json)
+
+init_sentry("https://pub@o0.ingest.sentry.io/0", environment="production", release="codesasu-00042",
+            transport=Capture)
+# 실제 서버(gunicorn)처럼 WSGI 입구로 요청을 넣는다. Sentry는 이 입구에서 요청 정보를 붙인다
+import io
+from wsgiref.util import setup_testing_defaults
+from django.core.wsgi import get_wsgi_application
+app = get_wsgi_application()
+body = b'{"answer": 2, "password": "pw-secret-1"}'
+environ = {"REQUEST_METHOD": "POST", "PATH_INFO": "/internal/push/send-due", "QUERY_STRING": "from=scheduler",
+           "CONTENT_TYPE": "application/json", "CONTENT_LENGTH": str(len(body)), "wsgi.input": io.BytesIO(body),
+           "HTTP_HOST": "testserver", "HTTP_X_CRON_TOKEN": "cron-secret-9", "HTTP_USER_AGENT": "iPhone Safari",
+           "HTTP_COOKIE": "sessionid=sess-secret-7", "HTTP_X_FORWARDED_FOR": "203.0.113.7", "REMOTE_ADDR": "203.0.113.7"}
+setup_testing_defaults(environ)
+statuses = []
+# 알림 예약 실행(Cloud Scheduler) 주소: 비밀 헤더(X-Cron-Token)를 받는 곳에서 오류가 났다고 가정
+with mock.patch("learning.push.send_due", side_effect=RuntimeError("boom")):
+    b"".join(app(environ, lambda status, headers, exc_info=None: statuses.append(status)))
+res = type("R", (), {"status_code": int(statuses[0].split()[0])})
+sentry_sdk.flush()
+print(json.dumps({"status": res.status_code, "events": sent}, ensure_ascii=False))
+'''
+
+
+class SentryTests(SimpleTestCase):
+    """6.1 서버 오류 알림: 오류는 보내되 사용자 정보·비밀값은 서버 밖으로 나가지 않는다"""
+
+    def test_scrubs_secret_paths_headers_body_and_user(self):
+        from config.sentry import before_send
+
+        event = {
+            "transaction": "/accounts/password/reset/key/1-abc-def/",
+            "request": {
+                "url": "https://x.run.app/accounts/password/reset/key/1-abc-def/",
+                "headers": {"User-Agent": "iPhone", "X-Cron-Token": "t", "Referer": "https://x/accounts/confirm-email/k1/"},
+                "data": {"password1": "p"}, "cookies": {"sessionid": "s"}, "env": {"REMOTE_ADDR": "1.2.3.4"},
+            },
+            "user": {"email": "a@b.c", "ip_address": "1.2.3.4"},
+        }
+        out = before_send(event, {})
+        self.assertEqual(out["request"]["url"], "https://x.run.app/accounts/password/reset/key/[가림]/")
+        self.assertEqual(out["transaction"], "/accounts/password/reset/key/[가림]/")
+        self.assertEqual(out["request"]["headers"], {"User-Agent": "iPhone"})
+        for key in ("data", "cookies", "env"):
+            self.assertNotIn(key, out["request"])
+        self.assertNotIn("user", out)
+
+    def test_outgoing_request_breadcrumbs_keep_only_host(self):
+        from config.sentry import before_breadcrumb
+
+        crumb = {"category": "httplib", "data": {
+            "url": "https://fcm.googleapis.com/fcm/send/abc123secret", "http.query": "x=1"}}
+        out = before_breadcrumb(crumb, {})
+        self.assertEqual(out["data"]["url"], "https://fcm.googleapis.com/…")
+        self.assertNotIn("http.query", out["data"])
+
+    def test_real_server_error_sends_no_personal_data(self):
+        """실제로 요청 처리 중 오류를 내고, 밖으로 나갈 내용을 그대로 잡아 확인한다"""
+        env = {**os.environ, "PUSH_CRON_TOKEN": "cron-secret-9", "VAPID_PRIVATE_KEY": TEST_VAPID_PRIVATE}
+        out = subprocess.run([sys.executable, "-c", SENTRY_E2E], cwd=str(settings.BASE_DIR), env=env,
+                             capture_output=True, text=True, timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr[-2000:])
+        result = json.loads(out.stdout.strip().splitlines()[-1])
+        self.assertEqual(result["status"], 500)
+        self.assertEqual(len(result["events"]), 1)
+        event = result["events"][0]
+        raw = json.dumps(event, ensure_ascii=False)
+        self.assertIn("boom", raw)  # 무슨 오류인지는 간다
+        self.assertEqual(event["environment"], "production")
+        self.assertEqual(event["release"], "codesasu-00042")
+        for secret in ("pw-secret-1", "cron-secret-9", "sess-secret-7", '"answer"', "203.0.113.7"):
+            self.assertNotIn(secret, raw)
+        self.assertEqual(event["request"]["headers"], {"User-Agent": "iPhone Safari"})
+        self.assertNotIn("user", event)
+
+    def test_settings_turn_sentry_on_only_with_dsn(self):
+        code = ("import json, config.settings, sentry_sdk; c = sentry_sdk.get_client(); "
+                "print(json.dumps([c.is_active(), c.options.get('send_default_pii') if c.is_active() else None]))")
+        base = {**os.environ, "DJANGO_SECRET_KEY": "x", "DATABASE_URL": "postgres://u:p@localhost:5432/db",
+                "GOOGLE_CLIENT_ID": "x", "GOOGLE_CLIENT_SECRET": "x"}
+
+        def run(**env):
+            out = subprocess.run([sys.executable, "-c", code], env={**base, **env}, cwd=str(settings.BASE_DIR),
+                                 capture_output=True, text=True, check=True)
+            return json.loads(out.stdout.strip().splitlines()[-1])
+
+        self.assertEqual(run(SENTRY_DSN=""), [False, None])
+        self.assertEqual(run(SENTRY_DSN="https://pub@o0.ingest.sentry.io/0"), [True, False])
+
+
+class SentryCheckUrlTests(TestCase):
+    def test_check_url_errors_only_for_admin(self):
+        """배포 뒤 관리자가 열어서 Sentry 메일이 오는지 확인하는 주소"""
+        self.assertEqual(Client().get("/internal/sentry-check").status_code, 404)
+        c = Client()
+        c.force_login(get_user_model().objects.create_user(username="u", email="u@example.com", password="x"))
+        self.assertEqual(c.get("/internal/sentry-check").status_code, 404)
+        c.force_login(get_user_model().objects.create_user(username="s", email="s@example.com", password="x", is_staff=True))
+        with self.assertRaisesMessage(RuntimeError, "Sentry 연결 확인용 오류"):
+            c.get("/internal/sentry-check")

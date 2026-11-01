@@ -15,6 +15,7 @@ urlpatterns = [
     path("accounts/", include("allauth.urls")),
     path("api/v1/", include("learning.urls")),
     path("internal/push/send-due", learning_views.push_send_due, name="push-send-due"),
+    path("internal/sentry-check", learning_views.sentry_check, name="sentry-check"),
     path("manifest.webmanifest", pages.manifest, name="manifest"),
     path("sw.js", pages.service_worker, name="service-worker"),
     path("lessons/<int:lesson_id>/", pages.lesson, name="lesson"),

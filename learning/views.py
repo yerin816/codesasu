@@ -726,3 +726,13 @@ def push_send_due(request):
     summary = push.send_due()
     logger.info("하루 알림: %s", summary)
     return ok(summary)
+
+
+def sentry_check(request):
+    """GET /internal/sentry-check : 오류 알림(Sentry)이 실제로 오는지 확인하려고 일부러 오류를 낸다 (WBS 6.1).
+    관리자만 쓸 수 있고, 다른 사람에게는 없는 주소(404)로 보인다"""
+    from django.http import Http404
+
+    if not (request.user.is_authenticated and request.user.is_staff):
+        raise Http404
+    raise RuntimeError("Sentry 연결 확인용 오류 (관리자가 일부러 냄)")

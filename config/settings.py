@@ -233,3 +233,13 @@ LOGGING = {
         "django": {"handlers": ["console"], "level": "WARNING", "propagate": False},
     },
 }
+
+# ── 서버 오류 알림 (WBS 6.1): SENTRY_DSN이 있을 때만 Sentry로 보낸다 ──────────
+# 사용자 정보(이메일·IP·쿠키·요청 본문)는 보내지 않는다. 자세한 규칙은 config/sentry.py
+SENTRY_DSN = os.getenv("SENTRY_DSN", "").strip()
+if SENTRY_DSN:
+    from config.sentry import init_sentry
+
+    # K_REVISION: Cloud Run이 넣어 주는 버전 이름 (어느 배포에서 난 오류인지 구분)
+    init_sentry(SENTRY_DSN, environment="development" if DEBUG else "production",
+                release=os.getenv("K_REVISION") or None)
