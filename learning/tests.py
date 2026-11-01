@@ -8,7 +8,7 @@ import json
 import os
 import subprocess
 import sys
-from datetime import datetime, timezone as dt_timezone
+from datetime import datetime, timedelta, timezone as dt_timezone
 from unittest import mock
 
 from django.conf import settings
@@ -1666,3 +1666,239 @@ class ErrorPageTests(TestCase):
         res = server_error(RequestFactory().get("/"))
         self.assertEqual(res.status_code, 500)
         self.assertIn("잠시 문제가 생겼어요", res.content.decode())
+
+
+# ---------- 5.2 하루 1번 알림 ----------
+
+def make_browser_keys():
+    """브라우저가 구독할 때 만드는 키를 흉내 낸다 (p256dh 공개 키, auth 비밀값)"""
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    from . import webpush
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    return key, webpush.b64u_encode(webpush.public_key_bytes(key)), webpush.b64u_encode(os.urandom(16))
+
+
+def browser_decrypt(body, ua_private, auth_b64):
+    """브라우저 쪽에서 알림을 푸는 과정 (RFC 8291). 서버 암호화가 맞는지 왕복으로 확인한다"""
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+    from . import webpush
+
+    salt, idlen = body[:16], body[20]
+    as_public = body[21:21 + idlen]
+    ua_public = webpush.public_key_bytes(ua_private)
+    shared = ua_private.exchange(ec.ECDH(), ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), as_public))
+    ikm = webpush._hkdf(webpush.b64u_decode(auth_b64), shared, b"WebPush: info\x00" + ua_public + as_public, 32)
+    cek = webpush._hkdf(salt, ikm, b"Content-Encoding: aes128gcm\x00", 16)
+    nonce = webpush._hkdf(salt, ikm, b"Content-Encoding: nonce\x00", 12)
+    plain = AESGCM(cek).decrypt(nonce, body[21 + idlen:], None)
+    assert plain.endswith(b"\x02")
+    return plain[:-1]
+
+
+TEST_VAPID_PRIVATE = "yfWPiYE-n46HLnH0KqZOF1fJJU3MYrct3AELtAQ-oRw"  # RFC 8291 예제 키 (시험 전용)
+PUSH_ENV = {"VAPID_PRIVATE_KEY": TEST_VAPID_PRIVATE, "PUSH_CRON_TOKEN": "test-cron-token"}
+FCM = "https://fcm.googleapis.com/fcm/send/abc123"
+
+
+class WebPushCryptoTests(SimpleTestCase):
+    def test_matches_rfc8291_example(self):
+        from . import webpush as w
+
+        body = w.encrypt(
+            b"When I grow up, I want to be a watermelon",
+            w.b64u_decode("BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4"),
+            w.b64u_decode("BTBZMqHH6r4Tts7J_aSIgg"),
+            as_private=w.private_key_from_b64(TEST_VAPID_PRIVATE), salt=w.b64u_decode("DGv6ra1nlYgDCS1FRnbzlw"),
+        )
+        self.assertEqual(w.b64u_encode(body),
+                         "DGv6ra1nlYgDCS1FRnbzlwAAEABBBP4z9KsN6nGRTbVYI_c7VJSPQTBtkgcy27mlmlMoZIIgDll6e3vCYLocInmYWAmS6TlzAC8w"
+                         "EqKK6PBru3jl7A_yl95bQpu6cVPTpK4Mqgkf1CXztLVBSt2Ks3oZwbuwXPXLWyouBWLVWGNWQexSgSxsj_Qulcy4a-fN")
+
+    def test_send_round_trip_and_vapid_header(self):
+        import jwt
+
+        from . import webpush as w
+        from .models import PushSubscription
+
+        ua_private, p256dh, auth = make_browser_keys()
+        sub = PushSubscription(endpoint=FCM, p256dh=p256dh, auth=auth)
+        captured = {}
+
+        def fake_post(url, data, timeout, headers):
+            captured.update(url=url, data=data, headers=headers)
+            return mock.Mock(status_code=201)
+
+        with mock.patch.dict(os.environ, PUSH_ENV), mock.patch("learning.webpush.requests.post", fake_post):
+            self.assertEqual(w.send(sub, {"title": "코드사수", "body": "오늘의 레슨"}), "ok")
+        self.assertEqual(json.loads(browser_decrypt(captured["data"], ua_private, auth)),
+                         {"title": "코드사수", "body": "오늘의 레슨"})
+        h = captured["headers"]
+        self.assertEqual(h["Content-Encoding"], "aes128gcm")
+        token = h["Authorization"].split("t=")[1].split(",")[0]
+        server_key = w.private_key_from_b64(TEST_VAPID_PRIVATE).public_key()
+        claims = jwt.decode(token, server_key, algorithms=["ES256"], audience="https://fcm.googleapis.com")
+        self.assertTrue(claims["sub"].startswith("mailto:"))
+
+    def test_gone_and_errors(self):
+        from . import webpush as w
+        from .models import PushSubscription
+
+        _, p256dh, auth = make_browser_keys()
+        sub = PushSubscription(endpoint=FCM, p256dh=p256dh, auth=auth)
+        with mock.patch.dict(os.environ, PUSH_ENV):
+            for code, expected in [(410, w.GONE), (404, w.GONE), (500, "error:500")]:
+                with mock.patch("learning.webpush.requests.post", return_value=mock.Mock(status_code=code)):
+                    self.assertEqual(w.send(sub, {}), expected)
+
+    def test_only_real_push_services_allowed(self):
+        from .webpush import is_allowed_endpoint
+
+        for ok_url in [FCM, "https://web.push.apple.com/QGx", "https://updates.push.services.mozilla.com/wpush/v2/x",
+                       "https://wns2-par02p.notify.windows.com/w/?token=x"]:
+            self.assertTrue(is_allowed_endpoint(ok_url), ok_url)
+        for bad in ["http://fcm.googleapis.com/x", "https://localhost/x", "https://169.254.169.254/latest",
+                    "https://fcm.googleapis.com.evil.com/x", "https://evilfcm.googleapis.com.attacker.io/x",
+                    "https://fcm.googleapis.com:8443/x", "javascript:alert(1)"]:
+            self.assertFalse(is_allowed_endpoint(bad), bad)
+
+    def test_generated_keys_work(self):
+        from . import webpush as w
+
+        private, public = w.generate_vapid_keys()
+        self.assertEqual(w.b64u_encode(w.public_key_bytes(w.private_key_from_b64(private))), public)
+
+
+@mock.patch.dict(os.environ, PUSH_ENV)
+class PushApiTests(ApiTestCase):
+    def setUp(self):
+        from django.core.cache import cache
+
+        cache.clear()
+        self.user = self.make_user()
+        self.client.force_login(self.user)
+        self.ua_private, self.p256dh, self.auth = make_browser_keys()
+
+    def subscribe(self, endpoint=FCM, notify_time="08:00", client=None, **override):
+        data = {"endpoint": endpoint, "keys": {"p256dh": self.p256dh, "auth": self.auth}, "notify_time": notify_time}
+        data.update(override)
+        return self.post("/api/v1/push/subscriptions", data, client=client)
+
+    def test_key_and_today_flag(self):
+        self.assertTrue(self.client.get("/api/v1/push/key").json()["public_key"].startswith("BP4z9KsN"))
+        self.assertIs(self.client.get("/api/v1/today").json()["notify_on"], False)
+        self.assertEqual(self.subscribe().status_code, 201)
+        self.assertIs(self.client.get("/api/v1/today").json()["notify_on"], True)
+        with mock.patch.dict(os.environ, {"VAPID_PRIVATE_KEY": ""}):
+            self.assertIsNone(self.client.get("/api/v1/push/key").json()["public_key"])
+            self.assertIsNone(self.client.get("/api/v1/today").json()["notify_on"])  # 서버 설정 전엔 링크도 숨김
+
+    def test_subscribe_validation(self):
+        from .models import PushSubscription
+
+        self.assertEqual(self.subscribe(endpoint="https://localhost/push").status_code, 400)
+        self.assertEqual(self.subscribe(keys={"p256dh": "abc", "auth": self.auth}).status_code, 400)
+        self.assertEqual(self.subscribe(notify_time="07:15").status_code, 400)
+        self.assertEqual(self.subscribe(notify_time="05:00").status_code, 400)
+        self.assertEqual(self.subscribe(client=Client()).status_code, 401)
+        self.assertFalse(PushSubscription.objects.exists())
+
+        res = self.subscribe(notify_time="21:30").json()
+        self.assertEqual((res["notify_time"], res["push_devices"]), ("21:30", 1))
+        self.subscribe()  # 같은 기기 다시 → 하나로 유지
+        self.assertEqual(PushSubscription.objects.count(), 1)
+
+    def test_same_device_moves_to_new_account_and_unsubscribe(self):
+        from .models import PushSubscription
+
+        self.subscribe()
+        other = Client()
+        other_user = self.make_user("other@example.com")
+        other.force_login(other_user)
+        self.subscribe(client=other)
+        self.assertEqual(PushSubscription.objects.get().user, other_user)
+
+        res = self.post("/api/v1/push/subscriptions/delete", {"endpoint": FCM}, client=other).json()
+        self.assertEqual((res["push_devices"], res["notify_time"]), (0, None))
+
+    def test_change_time_via_me(self):
+        patch = lambda v: self.client.patch("/api/v1/me", json.dumps({"notify_time": v}), content_type="application/json")
+        self.assertEqual(patch("12:30").json()["notify_time"], "12:30")
+        self.assertEqual(patch("12:31").status_code, 400)
+        self.assertIsNone(patch(None).json()["notify_time"])
+
+    def test_test_push_has_cooldown(self):
+        self.subscribe()
+        with mock.patch("learning.webpush.send", return_value="ok") as send:
+            self.assertEqual(self.post("/api/v1/push/test").json()["sent"], 1)
+            self.assertEqual(self.post("/api/v1/push/test").status_code, 429)
+        self.assertEqual(send.call_count, 1)
+
+    def test_cron_endpoint_needs_token(self):
+        from django.test import Client as C
+
+        c = C(enforce_csrf_checks=True)  # 스케줄러는 CSRF 토큰 없이 부른다
+        self.assertEqual(c.post("/internal/push/send-due").status_code, 403)
+        self.assertEqual(c.post("/internal/push/send-due", HTTP_X_CRON_TOKEN="wrong").status_code, 403)
+        self.assertEqual(c.get("/internal/push/send-due", HTTP_X_CRON_TOKEN="test-cron-token").status_code, 405)
+        res = c.post("/internal/push/send-due", HTTP_X_CRON_TOKEN="test-cron-token")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()["sent"], 0)
+        with mock.patch.dict(os.environ, {"PUSH_CRON_TOKEN": ""}):
+            self.assertEqual(c.post("/internal/push/send-due", HTTP_X_CRON_TOKEN="").status_code, 503)
+
+    def run_due(self, kst):
+        """한국 시간 kst(datetime)에 예약 실행이 돌았을 때"""
+        from . import push
+
+        now = datetime(*kst, tzinfo=dt_timezone.utc) - timedelta(hours=9)
+        with mock.patch("learning.webpush.send", return_value="ok") as send, \
+                mock.patch("django.utils.timezone.now", return_value=now):
+            summary = push.send_due()
+        return summary, send
+
+    def test_daily_rules(self):
+        from .models import PushDelivery
+
+        self.subscribe(notify_time="08:00")
+        self.assertEqual(self.run_due((2026, 10, 15, 7, 30))[0]["sent"], 0)   # 아직 시각 전
+        summary, send = self.run_due((2026, 10, 15, 8, 0))
+        self.assertEqual(summary["sent"], 1)
+        payload = send.call_args[0][1]
+        self.assertIn("반복문", payload["body"])  # 다음 레슨 제목 (샘플 레슨 1)
+        self.assertEqual(payload["url"], "/?from=push")
+        self.assertEqual(self.run_due((2026, 10, 15, 8, 30))[0]["sent"], 0)   # 하루 한 번
+        self.assertEqual(PushDelivery.objects.get().sent_on.isoformat(), "2026-10-15")
+        self.assertEqual(self.run_due((2026, 10, 16, 9, 0))[0]["sent"], 0)    # 1시간 지나면 그날은 건너뜀
+        self.assertEqual(self.run_due((2026, 10, 17, 8, 30))[0]["sent"], 1)   # 다음 날 다시
+
+    def test_no_push_if_already_studied_today_or_nothing_left(self):
+        self.subscribe(notify_time="21:00")
+        p = LessonProgress.objects.create(user=self.user, lesson_id=1)
+        LessonProgress.objects.filter(id=p.id).update(completed_at=datetime(2026, 10, 15, 3, 0, tzinfo=dt_timezone.utc))
+        self.assertEqual(self.run_due((2026, 10, 15, 21, 0))[0]["sent"], 0)   # 한국 10/15 낮에 이미 풂
+        LessonProgress.objects.create(user=self.user, lesson_id=2, completed_at=datetime(2026, 10, 14, tzinfo=dt_timezone.utc))
+        summary, _ = self.run_due((2026, 10, 16, 21, 0))
+        self.assertEqual((summary["sent"], summary["skipped_no_lesson"]), (0, 1))  # 레슨을 다 끝냄
+
+    def test_gone_subscription_removed_and_open_recorded(self):
+        from . import push
+        from .models import PushDelivery, PushSubscription
+
+        self.subscribe(notify_time="08:00")
+        now = datetime(2026, 10, 15, 8, 0, tzinfo=dt_timezone.utc) - timedelta(hours=9)
+        with mock.patch("learning.webpush.send", return_value="gone"), \
+                mock.patch("django.utils.timezone.now", return_value=now):
+            self.assertEqual(push.send_due()["removed"], 1)
+            self.assertFalse(PushSubscription.objects.exists())
+            self.post("/api/v1/push/opened")
+        self.assertIsNotNone(PushDelivery.objects.get().opened_at)
+
+    def test_service_worker_handles_push(self):
+        res = self.client.get("/sw.js")
+        self.assertContains(res, 'addEventListener("push"')
+        self.assertContains(res, 'addEventListener("notificationclick"')
+        self.assertContains(res, "/static/learning/icons/icon-192")

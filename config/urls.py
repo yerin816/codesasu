@@ -3,7 +3,7 @@ from django.conf import settings
 from django.contrib import admin
 from django.urls import include, path
 
-from learning import pages
+from learning import pages, views as learning_views
 
 # 관리자 로그인도 일반 로그인 화면(allauth)을 거치게 한다.
 # 그쪽에 로그인 시도 제한이 있고, 구글 계정(2단계 인증)으로 들어올 수 있다.
@@ -14,6 +14,7 @@ urlpatterns = [
     path(settings.ADMIN_PATH, admin.site.urls),
     path("accounts/", include("allauth.urls")),
     path("api/v1/", include("learning.urls")),
+    path("internal/push/send-due", learning_views.push_send_due, name="push-send-due"),
     path("manifest.webmanifest", pages.manifest, name="manifest"),
     path("sw.js", pages.service_worker, name="service-worker"),
     path("lessons/<int:lesson_id>/", pages.lesson, name="lesson"),

@@ -236,3 +236,32 @@ class LessonView(models.Model):
 
     class Meta:
         indexes = [models.Index(fields=["lesson", "created_at"])]
+
+
+class PushSubscription(models.Model):
+    """웹 푸시 구독 1개 = 브라우저(기기) 1개 (WBS 5.2, FR-14).
+    endpoint는 구글·애플 등 푸시 서비스 주소이고, p256dh·auth는 그 브라우저만 풀 수 있게 암호화할 때 쓰는 키다"""
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="push_subscriptions")
+    endpoint = models.CharField(max_length=1000, unique=True)
+    p256dh = models.CharField(max_length=200)
+    auth = models.CharField(max_length=100)
+    user_agent = models.CharField(max_length=300, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_sent_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.user} - {self.endpoint[:40]}"
+
+
+class PushDelivery(models.Model):
+    """하루 알림 1회 기록. 베타 분석에서 '알림을 받은 날 레슨을 풀었는지', '알림을 눌렀는지'를 본다"""
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="push_deliveries")
+    sent_on = models.DateField()  # 한국 날짜
+    sent_at = models.DateTimeField(auto_now_add=True)
+    ok_count = models.PositiveSmallIntegerField(default=0)  # 보낸 기기 수
+    opened_at = models.DateTimeField(null=True, blank=True)  # 알림을 눌러 앱을 연 때
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["user", "sent_on"], name="unique_push_per_day")]

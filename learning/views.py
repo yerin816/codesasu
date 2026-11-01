@@ -5,23 +5,28 @@
 - 로그인 없이는 첫 레슨만 풀 수 있다(FR-01). 게스트 기록은 세션의 guest_key로 묶는다.
 """
 
+import hmac
 import json
 import logging
 import math
+import os
+import re
 import secrets
-from datetime import timedelta
+from datetime import time as dtime, timedelta
 
+from django.core.cache import cache
 from django.db import IntegrityError
 from django.db.models import Count
 from django.http import JsonResponse
 from django.utils import timezone
-from django.views.decorators.csrf import ensure_csrf_cookie
+from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from .embeddings import EmbeddingError
 from .hints import DAILY_LIMIT, LLMError, generate_hint
+from . import push, webpush
 from .models import (AnswerAttempt, ExplanationReveal, HintRequest, Lesson, LessonProgress, LessonView, Profile,
-                     Question)
+                     PushDelivery, PushSubscription, Question)
 
 logger = logging.getLogger(__name__)
 
@@ -218,6 +223,9 @@ def today(request):
         "needs_onboarding": get_profile(request.user).onboarded_at is None,
         # 목표를 고른 뒤 첫 레슨 전에 사전 진단을 권한다 (FR-03). 끝냈거나 건너뛰었으면 None
         "pre_diagnostic": lesson_brief(pre) if pre else None,
+        # 알림을 켰는지 (홈에서 '매일 알림 받기' 링크를 보여 줄지). 서버 알림 설정이 없으면 None
+        "notify_on": (bool(get_profile(request.user).notify_time) and request.user.push_subscriptions.exists())
+        if webpush.vapid_private_key() else None,
         "is_guest": False,
     })
 
@@ -501,7 +509,19 @@ def profile_payload(profile):
         "notify_time": profile.notify_time.strftime("%H:%M") if profile.notify_time else None,
         "timezone": profile.timezone,
         "onboarded": profile.onboarded_at is not None,
+        "push_devices": profile.user.push_subscriptions.count(),  # 알림을 켠 기기 수
     }
+
+
+NOTIFY_TIME_RE = re.compile(r"^(0[6-9]|1\d|2[0-3]):(00|30)$")  # 06:00~23:30, 30분 단위 (예약 실행이 30분마다)
+
+
+def parse_notify_time(value):
+    """"HH:MM" → time. 형식이 틀리면 ValueError"""
+    if not isinstance(value, str) or not NOTIFY_TIME_RE.match(value):
+        raise ValueError
+    hour, minute = map(int, value.split(":"))
+    return dtime(hour, minute)
 
 
 @require_http_methods(["GET", "PATCH"])
@@ -514,15 +534,24 @@ def me(request):
         data = read_json(request)
         if data is None:
             return error("VALIDATION_ERROR", "요청 형식이 올바르지 않아요.", 400)
-        unknown = set(data) - {"weekly_goal_days"}
-        if unknown:
+        unknown = set(data) - {"weekly_goal_days", "notify_time"}
+        if unknown or not data:
             return error("VALIDATION_ERROR", f"바꿀 수 없는 항목이에요: {', '.join(sorted(unknown))}", 400)
-        goal = data.get("weekly_goal_days")
-        if not is_number(goal) or goal not in Profile.Goal.values:
-            return error("VALIDATION_ERROR", "주간 목표는 3, 5, 7일 중에서 골라 주세요.", 400)
-        profile.weekly_goal_days = goal
-        if profile.onboarded_at is None:
-            profile.onboarded_at = timezone.now()
+        if "weekly_goal_days" in data:
+            goal = data["weekly_goal_days"]
+            if not is_number(goal) or goal not in Profile.Goal.values:
+                return error("VALIDATION_ERROR", "주간 목표는 3, 5, 7일 중에서 골라 주세요.", 400)
+            profile.weekly_goal_days = goal
+            if profile.onboarded_at is None:
+                profile.onboarded_at = timezone.now()
+        if "notify_time" in data:
+            if data["notify_time"] is None:
+                profile.notify_time = None
+            else:
+                try:
+                    profile.notify_time = parse_notify_time(data["notify_time"])
+                except ValueError:
+                    return error("VALIDATION_ERROR", "알림 시각은 06:00~23:30 사이 30분 단위로 골라 주세요.", 400)
         profile.save()
     return ok(profile_payload(profile))
 
@@ -596,3 +625,104 @@ def skip_pre_diagnostic(request):
         profile.pre_diag_skipped_at = timezone.now()
         profile.save(update_fields=["pre_diag_skipped_at", "updated_at"])
     return ok({"skipped": True})
+
+
+# ---------- 웹 푸시 알림 (WBS 5.2, FR-14) ----------
+
+MAX_PUSH_DEVICES = 5
+TEST_PUSH_COOLDOWN = 30  # 초. 테스트 알림 버튼 연타 방지
+
+
+@require_GET
+def push_key(request):
+    """GET /api/v1/push/key : 브라우저가 구독할 때 쓰는 서버 공개 키. 서버 설정이 없으면 null (화면에서 알림 카드를 숨긴다)"""
+    return ok({"public_key": webpush.vapid_public_key_b64()})
+
+
+@require_POST
+@login_required_json
+def push_subscribe(request):
+    """POST /api/v1/push/subscriptions : 이 기기에서 알림 켜기 {endpoint, keys:{p256dh, auth}, notify_time}"""
+    data = read_json(request)
+    if data is None:
+        return error("VALIDATION_ERROR", "요청 형식이 올바르지 않아요.", 400)
+    endpoint = data.get("endpoint")
+    keys = data.get("keys") if isinstance(data.get("keys"), dict) else {}
+    if not isinstance(endpoint, str) or len(endpoint) > 1000 or not webpush.is_allowed_endpoint(endpoint):
+        return error("VALIDATION_ERROR", "지원하지 않는 알림 주소예요.", 400)
+    try:
+        p256dh, auth = webpush.b64u_decode(keys.get("p256dh", "")), webpush.b64u_decode(keys.get("auth", ""))
+    except (ValueError, TypeError):
+        p256dh = auth = b""
+    if len(p256dh) != 65 or p256dh[0] != 4 or len(auth) != 16:
+        return error("VALIDATION_ERROR", "알림 키 형식이 올바르지 않아요.", 400)
+
+    profile = get_profile(request.user)
+    if "notify_time" in data:
+        try:
+            profile.notify_time = parse_notify_time(data["notify_time"])
+        except ValueError:
+            return error("VALIDATION_ERROR", "알림 시각은 06:00~23:30 사이 30분 단위로 골라 주세요.", 400)
+        profile.save(update_fields=["notify_time", "updated_at"])
+
+    # 같은 기기를 다른 계정으로 다시 구독하면 지금 계정으로 옮긴다
+    PushSubscription.objects.update_or_create(endpoint=endpoint, defaults={
+        "user": request.user, "p256dh": keys["p256dh"], "auth": keys["auth"],
+        "user_agent": request.META.get("HTTP_USER_AGENT", "")[:300],
+    })
+    extra = request.user.push_subscriptions.order_by("-created_at").values_list("id", flat=True)[MAX_PUSH_DEVICES:]
+    PushSubscription.objects.filter(id__in=list(extra)).delete()
+    return ok(profile_payload(profile), status=201)
+
+
+@require_POST
+@login_required_json
+def push_unsubscribe(request):
+    """POST /api/v1/push/subscriptions/delete : 이 기기 알림 끄기 {endpoint}. 남은 기기가 없으면 알림 시각도 지운다"""
+    data = read_json(request) or {}
+    request.user.push_subscriptions.filter(endpoint=data.get("endpoint", "")).delete()
+    profile = get_profile(request.user)
+    if not request.user.push_subscriptions.exists() and profile.notify_time is not None:
+        profile.notify_time = None
+        profile.save(update_fields=["notify_time", "updated_at"])
+    return ok(profile_payload(profile))
+
+
+@require_POST
+@login_required_json
+def push_test(request):
+    """POST /api/v1/push/test : 내 기기로 테스트 알림 (폰 점검용). 30초에 한 번"""
+    if webpush.vapid_private_key() is None:
+        return error("PUSH_DISABLED", "서버에 알림 설정이 아직 없어요.", 503)
+    if not request.user.push_subscriptions.exists():
+        return error("VALIDATION_ERROR", "먼저 이 기기에서 알림을 켜 주세요.", 400)
+    if not cache.add(f"push-test:{request.user.id}", 1, TEST_PUSH_COOLDOWN):
+        return error("RATE_LIMITED", "테스트 알림은 30초에 한 번 보낼 수 있어요.", 429)
+    sent, removed = push.send_to_user(request.user, {
+        "title": "코드사수", "body": "알림이 잘 도착했어요. 정한 시간에 오늘의 레슨을 알려 드릴게요.", "url": "/",
+    })
+    return ok({"sent": sent, "removed": removed})
+
+
+@require_POST
+@login_required_json
+def push_opened(request):
+    """POST /api/v1/push/opened : 알림을 눌러 앱을 열었다 (베타 분석: 알림 → 학습 전환)"""
+    today = timezone.localdate()
+    PushDelivery.objects.filter(user=request.user, sent_on=today, opened_at__isnull=True).update(opened_at=timezone.now())
+    return ok({"ok": True})
+
+
+@csrf_exempt  # 브라우저가 아니라 Cloud Scheduler가 부른다. 대신 비밀 토큰으로 확인한다
+@require_POST
+def push_send_due(request):
+    """POST /internal/push/send-due : 지금 알림을 보낼 사람에게 보낸다 (Cloud Scheduler가 30분마다 호출)"""
+    expected = os.environ.get("PUSH_CRON_TOKEN", "")
+    if not expected or webpush.vapid_private_key() is None:
+        return error("PUSH_DISABLED", "알림 설정이 없어요.", 503)
+    given = request.headers.get("X-Cron-Token", "")
+    if not hmac.compare_digest(given.encode(), expected.encode()):
+        return error("FORBIDDEN", "권한이 없어요.", 403)
+    summary = push.send_due()
+    logger.info("하루 알림: %s", summary)
+    return ok(summary)

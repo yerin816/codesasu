@@ -108,6 +108,12 @@ h2 { font-size: 18px; line-height: 1.45; margin: 4px 0 12px; }
 .dot { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--line); background: var(--surface); }
 .dot.on { background: var(--accent); border-color: var(--accent); }
 .more-link { display: inline-block; margin-top: 12px; font-size: 14px; font-weight: 700; padding: 6px 0; }
+.more-links { display: flex; gap: 18px; flex-wrap: wrap; }
+
+/* 매일 알림 (FR-14) */
+.field-label { display: block; margin: 12px 0 6px; font-size: 13px; font-weight: 700; color: var(--muted); }
+.select { width: 100%; min-height: 46px; padding: 8px 12px; border: 1.5px solid var(--line); border-radius: 12px; background: var(--surface); font: inherit; color: var(--text); }
+.row-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 
 /* 주간 목표 고르기 (FR-02): 세 칸 버튼 */
 .goal-picker { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }

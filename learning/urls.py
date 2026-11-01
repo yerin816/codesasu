@@ -14,4 +14,9 @@ urlpatterns = [
     path("progress/weekly", views.weekly_progress, name="api-weekly-progress"),
     path("progress/lessons", views.lesson_records, name="api-lesson-records"),
     path("diagnostics/pre/skip", views.skip_pre_diagnostic, name="api-skip-pre-diagnostic"),
+    path("push/key", views.push_key, name="api-push-key"),
+    path("push/subscriptions", views.push_subscribe, name="api-push-subscribe"),
+    path("push/subscriptions/delete", views.push_unsubscribe, name="api-push-unsubscribe"),
+    path("push/test", views.push_test, name="api-push-test"),
+    path("push/opened", views.push_opened, name="api-push-opened"),
 ]

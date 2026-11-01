@@ -1,4 +1,4 @@
-// 코드사수 서비스 워커 (PWA 설치용 최소 버전)
+{% load static %}// 코드사수 서비스 워커 (PWA 설치용 최소 버전)
 // - 항상 인터넷에서 먼저 받고(네트워크 우선), 끊겼을 때만 저장해 둔 CSS·JS·아이콘을 쓴다.
 //   그래서 코드를 고치면 바로 반영되고, 오래된 화면이 남는 문제가 없다.
 // - API·로그인·관리 화면은 저장하지 않는다 (개인 기록과 정답 채점은 항상 서버에서).
@@ -46,5 +46,41 @@ self.addEventListener("fetch", (event) => {
         if (req.mode === "navigate") return offlinePage();
         return Response.error();
       })
+  );
+});
+
+// ---------- 하루 1번 알림 (WBS 5.2, FR-14) ----------
+// 서버가 암호화해 보낸 알림을 받아 화면에 띄운다. 누르면 코드사수를 연다
+const ICON = "{% static 'learning/icons/icon-192.png' %}";
+
+self.addEventListener("push", (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch (e) {
+    data = { body: event.data ? event.data.text() : "" };
+  }
+  event.waitUntil(
+    self.registration.showNotification(data.title || "코드사수", {
+      body: data.body || "",
+      icon: ICON,
+      tag: "codesasu-daily",  // 같은 날 알림이 여러 개 쌓이지 않게 하나로 바꿔 끼운다
+      data: { url: data.url || "/" },
+    })
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = new URL((event.notification.data && event.notification.data.url) || "/", self.location.origin).href;
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((wins) => {
+      for (const win of wins) {
+        if (new URL(win.url).origin === self.location.origin && "focus" in win) {
+          return win.navigate(url).then((w) => (w || win).focus());
+        }
+      }
+      return self.clients.openWindow(url);
+    })
   );
 });

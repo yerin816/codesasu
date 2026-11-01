@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.urls import reverse
 from django.utils.html import format_html
 
-from .models import AnswerAttempt, Course, ExplanationReveal, HintRequest, Lesson, LessonProgress, Profile, Question
+from .models import AnswerAttempt, Course, ExplanationReveal, HintRequest, Lesson, LessonProgress, Profile, PushDelivery, PushSubscription, Question
 
 
 # 과정·레슨·문제 내용은 lessons/ 폴더의 파일이 원본이다 (sync_lessons가 서버 시작 때 반영).
@@ -79,6 +79,36 @@ class ProfileAdmin(admin.ModelAdmin):
     list_display = ["user", "weekly_goal_days", "onboarded_at", "updated_at"]
     list_filter = ["weekly_goal_days"]
     readonly_fields = ["user", "weekly_goal_days", "notify_time", "timezone", "onboarded_at", "updated_at"]
+
+    def has_add_permission(self, request):
+        return False
+
+
+@admin.register(PushSubscription)
+class PushSubscriptionAdmin(admin.ModelAdmin):
+    """알림을 켠 기기. 암호화 키는 보여 주지 않는다"""
+
+    list_display = ["user", "push_service", "created_at", "last_sent_at"]
+    fields = ["user", "user_agent", "created_at", "last_sent_at"]
+    readonly_fields = fields
+
+    @admin.display(description="푸시 서비스")
+    def push_service(self, obj):
+        from urllib.parse import urlsplit
+
+        return urlsplit(obj.endpoint).hostname
+
+    def has_add_permission(self, request):
+        return False
+
+
+@admin.register(PushDelivery)
+class PushDeliveryAdmin(admin.ModelAdmin):
+    """하루 알림 기록 (베타 분석: 알림 → 학습 전환)"""
+
+    list_display = ["user", "sent_on", "ok_count", "opened_at"]
+    list_filter = ["sent_on"]
+    readonly_fields = ["user", "sent_on", "sent_at", "ok_count", "opened_at"]
 
     def has_add_permission(self, request):
         return False

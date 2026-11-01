@@ -111,6 +111,11 @@ function minutesText(sec) {
 
 async function initHome() {
   const box = $("#today");
+  if (new URLSearchParams(location.search).get("from") === "push") {
+    // 알림을 눌러 들어왔다 (베타 분석: 알림 → 학습 전환). 주소는 깔끔하게 되돌린다
+    api("push/opened", {});
+    history.replaceState(null, "", "/");
+  }
   const res = await api("today");
   if (!res.ok) {
     box.innerHTML = `<p class="error">${esc(res.message)}</p>`;
@@ -162,9 +167,113 @@ async function initHome() {
 
   if (week) {
     const weekBox = $("#week");
-    weekBox.innerHTML = `${weekHtml(week)}<a class="more-link" href="/records/">학습 기록 보기</a>`;
+    const notifyLink = res.data.notify_on === false ? '<a class="more-link" href="/records/#notify">매일 알림 받기</a>' : "";
+    weekBox.innerHTML = `${weekHtml(week)}<div class="more-links"><a class="more-link" href="/records/">학습 기록 보기</a>${notifyLink}</div>`;
     weekBox.hidden = false;
   }
+}
+
+/* ---------------- 하루 1번 알림 (FR-14) ---------------- */
+
+function notifyTimeOptions(selected) {
+  let html = "";
+  for (let h = 6; h <= 23; h++) {
+    for (const m of ["00", "30"]) {
+      const v = `${String(h).padStart(2, "0")}:${m}`;
+      html += `<option value="${v}"${v === selected ? " selected" : ""}>${esc(timeLabel(v))}</option>`;
+    }
+  }
+  return html;
+}
+
+function timeLabel(v) {
+  const [h, m] = v.split(":").map(Number);
+  const ampm = h < 12 ? "오전" : "오후";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${ampm} ${h12}:${String(m).padStart(2, "0")}`;
+}
+
+function urlB64ToUint8Array(b64) {
+  const pad = "=".repeat((4 - (b64.length % 4)) % 4);
+  const raw = atob((b64 + pad).replace(/-/g, "+").replace(/_/g, "/"));
+  return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+}
+
+async function renderNotify(me) {
+  const box = $("#notify");
+  if (!box) return;
+  const keyRes = await api("push/key");
+  const key = keyRes.ok ? keyRes.data.public_key : null;
+  if (!key) { box.hidden = true; return; } // 서버 설정 전에는 카드를 숨긴다
+
+  const head = '<p class="eyebrow">매일 알림</p>';
+  const supported = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+  if (!supported) {
+    box.innerHTML = head + (isIos() && !isStandalone()
+      ? `<p class="small">아이폰은 <strong>홈 화면에 추가한 코드사수 앱</strong>에서만 알림을 받을 수 있어요.
+          사파리 아래 공유 버튼 → 홈 화면에 추가를 누른 뒤, 홈 화면의 코드사수에서 이 화면을 다시 열어 주세요.</p>`
+      : '<p class="muted small">이 브라우저는 알림을 지원하지 않아요.</p>');
+    box.hidden = false;
+    return;
+  }
+
+  const reg = await navigator.serviceWorker.ready;
+  const sub = await reg.pushManager.getSubscription();
+  const on = !!(sub && me.notify_time && me.push_devices > 0);
+  const time = me.notify_time || "08:00";
+
+  box.innerHTML = head + (on
+    ? `<p class="small">매일 <strong>${esc(timeLabel(time))}</strong>에 오늘의 레슨을 알려 드려요. 그날 이미 레슨을 풀었으면 보내지 않아요.</p>`
+    : '<p class="small">정한 시간에 하루 한 번, 오늘의 레슨을 알려 드려요.</p>') +
+    `<label class="field-label" for="notify-time">알림 시각</label>
+     <select id="notify-time" class="select">${notifyTimeOptions(time)}</select>
+     ${on
+       ? `<div class="row-btns"><button type="button" class="btn ghost small" id="notify-test">테스트 알림 보내기</button>
+          <button type="button" class="btn ghost small" id="notify-off">이 기기 알림 끄기</button></div>`
+       : '<button type="button" class="btn primary" id="notify-on">알림 켜기</button>'}
+     <div id="notify-msg" aria-live="polite"></div>`;
+  box.hidden = false;
+  const msg = (text, cls = "muted") => { $("#notify-msg").innerHTML = `<p class="${cls} small">${esc(text)}</p>`; };
+
+  if (on) {
+    $("#notify-time").addEventListener("change", async (e) => {
+      const r = await api("me", { notify_time: e.target.value }, "PATCH");
+      if (!r.ok) return msg(r.message, "error");
+      renderNotify(r.data);
+    });
+    $("#notify-test").addEventListener("click", async () => {
+      const r = await api("push/test", {});
+      msg(r.ok ? (r.data.sent ? "테스트 알림을 보냈어요. 몇 초 안에 도착해요." : "보낼 수 있는 기기가 없어요. 알림을 다시 켜 주세요.") : r.message,
+        r.ok && r.data.sent ? "muted" : "error");
+    });
+    $("#notify-off").addEventListener("click", async () => {
+      const endpoint = sub.endpoint;
+      await sub.unsubscribe().catch(() => {});
+      const r = await api("push/subscriptions/delete", { endpoint });
+      renderNotify(r.ok ? r.data : { ...me, notify_time: null, push_devices: 0 });
+    });
+    return;
+  }
+
+  $("#notify-on").addEventListener("click", async (e) => {
+    e.target.disabled = true;
+    // 권한 요청은 버튼을 누른 순간에 해야 한다 (아이폰은 사용자 동작 없이 물으면 거절된다)
+    const permission = await Notification.requestPermission();
+    if (permission !== "granted") {
+      e.target.disabled = false;
+      return msg("알림이 허용되지 않았어요. 휴대폰 설정 → 알림에서 코드사수를 허용한 뒤 다시 눌러 주세요.", "error");
+    }
+    try {
+      const s = sub || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToUint8Array(key) });
+      const j = s.toJSON();
+      const r = await api("push/subscriptions", { endpoint: j.endpoint, keys: j.keys, notify_time: $("#notify-time").value });
+      if (!r.ok) { e.target.disabled = false; return msg(r.message, "error"); }
+      renderNotify(r.data);
+    } catch (err) {
+      e.target.disabled = false;
+      msg("알림을 켜지 못했어요. 잠시 후 다시 눌러 주세요.", "error");
+    }
+  });
 }
 
 /* ---------------- 학습 기록 (FR-12) ---------------- */
@@ -211,6 +320,8 @@ async function initRecords() {
       </li>`;
     }).join("")}</ul>`;
   weeksBox.hidden = false;
+
+  renderNotify(meRes.data);
 
   // 3) 주간 목표 바꾸기
   const goalBox = $("#goal");
